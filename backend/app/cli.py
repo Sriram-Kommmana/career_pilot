@@ -134,6 +134,87 @@ def cmd_seed(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Scheduled sweep
+# ---------------------------------------------------------------------------
+
+
+def cmd_sweep(_args: argparse.Namespace) -> int:
+    return asyncio.run(_run_sweep())
+
+
+async def _run_sweep() -> int:
+    """Discover new postings, then notify users whose score threshold is cleared.
+
+    Meant to be invoked unattended by an OS scheduler (see docs/SCHEDULING.md), not
+    interactively. A Postgres advisory lock (``app.services.scheduler``) makes an
+    overlapping trigger a safe no-op rather than wasted duplicate work — every
+    write either stage performs is independently idempotent, so the lock is
+    defence against noise, not a correctness requirement.
+
+    Discovery and notification run as two independent stages, each in its own
+    try/except: a hard failure in one (not a per-source connector failure, which
+    ``run_discovery`` already reports without raising) must not prevent the other
+    from running against whatever data already exists.
+    """
+    from app.core.config import get_settings, resolve_database_url
+    from app.core.logging import get_logger
+    from app.db.session import get_engine, session_scope
+    from app.services import discovery as discovery_service
+    from app.services import scheduler as scheduler_service
+
+    logger = get_logger(__name__)
+    settings = get_settings()
+    # Start the database before anything else so a connection failure is reported
+    # here, clearly, instead of mid-sweep.
+    resolve_database_url(settings)
+
+    engine = get_engine()
+    lock_connection = await engine.connect()
+    try:
+        acquired = await scheduler_service.try_acquire_sweep_lock(lock_connection)
+        if not acquired:
+            _print("Sweep already running elsewhere — skipping.")
+            return 0
+
+        exit_code = 0
+
+        try:
+            async with session_scope() as session:
+                discovery_result = await discovery_service.run_discovery(
+                    session, user_id=None, settings=settings, board_tokens=[]
+                )
+            failed_sources = sum(1 for s in discovery_result.sources if s.status == "failed")
+            _print(
+                f"Discovery: {len(discovery_result.sources)} source(s) checked, "
+                f"{failed_sources} failed."
+            )
+        except Exception as exc:
+            exit_code = 1
+            _print(f"Discovery stage failed unexpectedly: {exc}")
+            logger.exception("sweep_discovery_stage_failed")
+
+        try:
+            async with session_scope() as session:
+                sweep_result = await scheduler_service.run_notification_sweep(
+                    session, settings=settings
+                )
+            _print(
+                f"Notifications: {sweep_result.notifications_created} created across "
+                f"{sweep_result.users_notified}/{sweep_result.users_considered} user(s) "
+                f"({sweep_result.users_failed} failed), {sweep_result.jobs_scored} job(s) scored."
+            )
+        except Exception as exc:
+            exit_code = 1
+            _print(f"Notification sweep failed unexpectedly: {exc}")
+            logger.exception("sweep_notification_stage_failed")
+
+        return exit_code
+    finally:
+        await scheduler_service.release_sweep_lock(lock_connection)
+        await lock_connection.close()
+
+
+# ---------------------------------------------------------------------------
 # Server
 # ---------------------------------------------------------------------------
 
@@ -200,6 +281,11 @@ def build_parser() -> argparse.ArgumentParser:
     seed.add_argument("--reset", action="store_true", help="Remove existing demo rows first.")
     seed.add_argument("--no-user", action="store_true", help="Skip the demo user account.")
     seed.set_defaults(func=cmd_seed)
+
+    sweep = sub.add_parser(
+        "sweep", help="Run discovery, then notify users whose score threshold is cleared."
+    )
+    sweep.set_defaults(func=cmd_sweep)
 
     serve = sub.add_parser("serve", help="Run the API server.")
     serve.add_argument("--host", default="127.0.0.1")

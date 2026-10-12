@@ -428,9 +428,24 @@ separated from verified facts everywhere.
 
 ### Phase 4 — notifications and workers
 
-RQ queues and worker processes; scheduled discovery; score threshold and filters;
-notification dedup; in-app notifications and history; SSE wired to Redis pub/sub.
-Email and Telegram left as unimplemented modular adapters.
+**Amendment, Phase 4A completion (2026-10-12):** this phase shipped in two
+milestones rather than as RQ/Redis from the start. An investigation at the Phase
+3→4 boundary found that `redis`/`rq` were declared (in `pyproject.toml`'s optional
+`workers` extra) but never installed or imported, that `POST /jobs/discover`
+already ran synchronously by design, and that `app.services.notifications` was
+fully implemented with zero callers — the gap was wiring, not missing
+infrastructure, and there is no Docker-free, locally-embeddable Redis equivalent
+to the `pgserver` story `app.core.devdb` already gives Postgres. **4A** (shipped):
+scheduled discovery and score-threshold, database-deduplicated in-app
+notifications, via a new `python -m app.cli sweep` command intended for an
+OS-level scheduler (Task Scheduler/cron — see `docs/SCHEDULING.md`), guarded by a
+Postgres advisory lock against overlapping runs, reusing
+`discovery.run_discovery`/`matching.analyze_many`/`notifications.notify_job_matches`
+unchanged. **4B** (not yet built): personalized application preparation —
+auto-advancing a matched job into an `Application` in `PREPARING`. RQ/Redis and
+SSE-over-Redis-pub/sub remain deferred until a genuine multi-process or
+multi-worker need is demonstrated, not built speculatively. Email and Telegram
+remain unimplemented modular adapters.
 
 ### Phase 5 — browser agent
 

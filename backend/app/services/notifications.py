@@ -56,7 +56,17 @@ async def create_notification(
     """Create a notification, or return ``None`` if it is a duplicate.
 
     A duplicate is not an error: the caller is usually a background sweep that
-    legitimately re-examines the same jobs. Returning ``None`` lets it carry on.
+    legitimately re-examines the same jobs, many times per call, across many users,
+    in one long-lived session. Returning ``None`` lets it carry on.
+
+    The conflicting insert runs inside its own ``SAVEPOINT`` (``begin_nested``) so
+    that failing it only undoes this one row. A plain ``session.rollback()`` here
+    would roll back the *entire* surrounding transaction — every object the caller
+    loaded before this call (e.g. a sweep's already-loaded jobs and profiles)
+    becomes expired, and the next attribute access on one of them raises
+    ``MissingGreenlet`` trying to implicitly reload it. That only shows up once a
+    real duplicate is actually hit partway through a longer unit of work, which a
+    single-notification caller or a fresh-database test never exercises.
     """
     notification = Notification(
         user_id=user_id,
@@ -69,11 +79,11 @@ async def create_notification(
         dedupe_key=dedupe_key,
         payload=payload or {},
     )
-    session.add(notification)
     try:
-        await session.flush()
+        async with session.begin_nested():
+            session.add(notification)
+            await session.flush()
     except IntegrityError:
-        await session.rollback()
         logger.debug("notification_suppressed_as_duplicate", dedupe_key=dedupe_key)
         return None
     return notification

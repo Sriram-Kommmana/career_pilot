@@ -55,6 +55,26 @@ logger = get_logger(__name__)
 _rate_limiters: dict[str, RateLimiter] = {}
 
 
+async def _emit(
+    user_id: uuid.UUID | None,
+    *,
+    kind: str,
+    message: str,
+    agent_run_id: uuid.UUID | None = None,
+    data: dict[str, object] | None = None,
+) -> None:
+    """Publish an activity event, or do nothing for a scheduled run with no user.
+
+    A sweep triggered by the CLI has no live SSE subscriber to reach — there is no
+    one signed in to receive it — so publishing would be a pointless call.
+    """
+    if user_id is None:
+        return
+    await events_service.emit(
+        user_id=user_id, kind=kind, message=message, agent_run_id=agent_run_id, data=data
+    )
+
+
 def _rate_limiter_for(kind: str, *, requests_per_minute: int) -> RateLimiter:
     limiter = _rate_limiters.get(kind)
     if limiter is None or limiter.requests_per_minute != requests_per_minute:
@@ -97,7 +117,7 @@ def _build_connector(kind: str, settings: Settings) -> Connector:
 async def run_discovery(
     session: AsyncSession,
     *,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     settings: Settings,
     board_tokens: list[str],
 ) -> DiscoveryRunResult:
@@ -107,6 +127,11 @@ async def run_discovery(
     source already configured", rather than doing nothing — so the same endpoint
     serves both "try this new board" and "refresh what I already have" without two
     separate routes.
+
+    ``user_id`` is ``None`` for a scheduled sweep with no acting user (Phase 4's
+    ``sweep`` CLI command) — ``AgentRun.user_id`` is nullable for exactly this case.
+    Activity events are skipped rather than published when there is no user to
+    receive them.
     """
     kind = GREENHOUSE_KIND
     connector = _build_connector(kind, settings)
@@ -126,8 +151,8 @@ async def run_discovery(
     session.add(agent_run)
     await session.flush()
 
-    await events_service.emit(
-        user_id=user_id,
+    await _emit(
+        user_id,
         kind="discovery_started",
         message=f"Searching {len(tokens)} Greenhouse board(s)."
         if tokens
@@ -171,8 +196,8 @@ async def run_discovery(
     )
     await session.flush()
 
-    await events_service.emit(
-        user_id=user_id,
+    await _emit(
+        user_id,
         kind="discovery_finished",
         message=agent_run.summary,
         agent_run_id=agent_run.id,
@@ -196,15 +221,15 @@ async def _run_one_source(
     external_key: str,
     agent_run_id: uuid.UUID,
     sequence: int,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     max_retries: int,
 ) -> SourceDiscoveryResult:
     started = time.monotonic()
     source = await get_or_create_source(session, kind=kind, external_key=external_key)
     source.last_run_at = utcnow()
 
-    await events_service.emit(
-        user_id=user_id,
+    await _emit(
+        user_id,
         kind="discovery_source_started",
         message=f"Fetching postings from {kind}:{external_key}.",
         agent_run_id=agent_run_id,
@@ -242,8 +267,8 @@ async def _run_one_source(
             error=exc.message,
         )
         await session.flush()
-        await events_service.emit(
-            user_id=user_id,
+        await _emit(
+            user_id,
             kind="discovery_source_failed",
             message=f"Could not fetch {kind}:{external_key}: {exc.message}",
             agent_run_id=agent_run_id,
@@ -306,8 +331,8 @@ async def _run_one_source(
     )
     await session.flush()
 
-    await events_service.emit(
-        user_id=user_id,
+    await _emit(
+        user_id,
         kind="discovery_source_finished",
         message=(
             f"{kind}:{external_key} — {len(postings)} posting(s): "

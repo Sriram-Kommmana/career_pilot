@@ -202,6 +202,31 @@ class TestClosedJobDetection:
         assert detail.status_code == 200, "the row must still exist, only its status changes"
         assert detail.json()["job"]["source_status"] == "CLOSED"
 
+    async def test_a_source_that_fails_on_re_fetch_does_not_close_its_own_jobs(
+        self, client: object, api: str, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``_run_one_source`` returns on a ``ConnectorError`` before it ever reaches
+        ``_close_missing_jobs`` — a board that goes from reachable to failing must
+        never be read as "every posting on this board just disappeared"."""
+        _install_mock_connector(monkeypatch, {"acme": _board_response([_job(1), _job(2)])})
+        await client.post(f"{api}/jobs/discover", headers=auth, json={"sources": ["acme"]})  # type: ignore[attr-defined]
+
+        feed = await client.get(f"{api}/jobs", headers=auth, params={"source": "greenhouse"})  # type: ignore[attr-defined]
+        job_ids = [i["job"]["id"] for i in feed.json()["items"]]
+        assert len(job_ids) == 2
+
+        _install_mock_connector(monkeypatch, {"acme": "timeout"})
+        second = await client.post(  # type: ignore[attr-defined]
+            f"{api}/jobs/discover", headers=auth, json={"sources": ["acme"]}
+        )
+        assert second.json()["sources"][0]["status"] == "failed"
+
+        for job_id in job_ids:
+            detail = await client.get(f"{api}/jobs/{job_id}", headers=auth)  # type: ignore[attr-defined]
+            assert detail.json()["job"]["source_status"] == "OPEN", (
+                "a failed re-fetch must not close jobs from the same, now-unreachable source"
+            )
+
 
 class TestPartialFailure:
     async def test_one_failing_board_does_not_affect_another_in_the_same_request(
@@ -325,3 +350,36 @@ class TestAuthentication:
     async def test_discover_requires_authentication(self, client: object, api: str) -> None:
         response = await client.post(f"{api}/jobs/discover", json={"sources": []})  # type: ignore[attr-defined]
         assert response.status_code == 401
+
+
+class TestScheduledSweep:
+    """``run_discovery(user_id=None, ...)`` — Phase 4A's scheduled sweep has no
+    acting user, unlike every HTTP-triggered call. There is no endpoint for this;
+    it is only ever reached via ``python -m app.cli sweep``."""
+
+    async def test_a_run_with_no_acting_user_does_not_raise_and_is_recorded_ownerless(
+        self, session: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sqlalchemy import select
+
+        from app.core.config import get_settings
+        from app.models import AgentRun
+        from app.services import discovery as discovery_service
+
+        _install_mock_connector(monkeypatch, {"acme": _board_response([_job(1)])})
+
+        result = await discovery_service.run_discovery(
+            session,  # type: ignore[arg-type]
+            user_id=None,
+            settings=get_settings(),
+            board_tokens=["acme"],
+        )
+        assert result.sources[0].status == "ok"
+
+        row = (
+            await session.execute(  # type: ignore[attr-defined]
+                select(AgentRun).where(AgentRun.id == result.agent_run_id)
+            )
+        ).scalar_one()
+        assert row.user_id is None
+        assert row.status == "succeeded"

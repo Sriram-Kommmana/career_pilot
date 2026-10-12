@@ -97,7 +97,13 @@ python -m app.cli seed --reset       # remove previously seeded jobs first
 
 # Server
 python -m app.cli serve --port 8000
+
+# Scheduled sweep (Phase 4A) — discover postings, then notify users above threshold
+python -m app.cli sweep
 ```
+
+`sweep` is meant to run unattended on a timer, not interactively — see
+[`docs/SCHEDULING.md`](docs/SCHEDULING.md) for Windows Task Scheduler and cron setup.
 
 Testing and code quality (from `backend/`, with the venv active):
 
@@ -181,8 +187,11 @@ career_pilot/
   no application can reach `WAITING_FOR_APPROVAL` through normal use, and
   `/submit` correctly refuses every attempt. A "record that you applied yourself"
   path exists as the honest interim option, explicitly marked as unverified.
-- **Background workers, scheduled discovery, email/Telegram notifications** —
-  Phase 4.
+- **Email/Telegram notifications** — Phase 4B+. Scheduled discovery and in-app,
+  threshold-based notifications shipped in Phase 4A as a `python -m app.cli sweep`
+  command run on a timer (Task Scheduler/cron — see
+  [`docs/SCHEDULING.md`](docs/SCHEDULING.md)), not a Redis/RQ worker pipeline — see
+  `docs/PLAN.md` §6 for why.
 - **An LLM provider** — not configured. Matching is fully deterministic; no API
   key is required or used anywhere in Phase 1.
 
