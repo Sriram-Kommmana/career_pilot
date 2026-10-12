@@ -1,0 +1,140 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "careerpilot-backend"
+version = "0.1.0"
+description = "CareerPilot — agentic job search and application platform (backend)"
+readme = "../README.md"
+# SQLAlchemy 2.1 requires >= 3.11. The 3.10 interpreter that is first on PATH on the
+# development machine will not work; use `py -3.12` or the project venv.
+requires-python = ">=3.12,<3.14"
+
+# Phase 1 runtime dependencies only. Later-phase libraries are declared in the
+# optional groups below so they are visible but not installed until needed.
+dependencies = [
+    "fastapi>=0.143,<0.144",
+    "uvicorn[standard]>=0.54,<0.55",
+    "pydantic[email]>=2.14,<3",
+    "pydantic-settings>=2.15,<3",
+    "sqlalchemy[asyncio]>=2.1,<2.2",
+    "alembic>=1.20,<2",
+    "asyncpg>=0.32,<0.33",
+    "psycopg[binary]>=3.3,<4",
+    "pyjwt>=2.15,<3",
+    "pwdlib[argon2]>=0.3,<0.4",
+    "structlog>=26.1,<27",
+    "sse-starlette>=3.5,<4",
+    "python-multipart>=0.0.32,<0.1",
+    "tenacity>=9.2,<10",
+]
+
+[project.optional-dependencies]
+# Phase 2 — ATS connectors
+connectors = [
+    "httpx>=0.28,<0.29",
+]
+# Phase 3 — resume extraction, evidence retrieval, agent graph
+agents = [
+    "langgraph>=1.2,<2",
+    "langchain-core>=1.6,<2",
+    "pgvector>=0.5,<0.6",
+    "pypdf>=6.20,<7",
+]
+# Phase 4 — queues and workers
+workers = [
+    "redis>=8.1,<9",
+    "rq>=2.12,<3",
+]
+# Phase 5 — browser agent
+browser = [
+    "playwright>=1.63,<2",
+]
+dev = [
+    # The local PostgreSQL 16 server, shipped as a wheel with pgvector built in. This
+    # is why CareerPilot needs no Docker, no system service, and no admin rights for
+    # local development. Production points CAREERPILOT_DATABASE_URL at a real server
+    # and this package is never loaded.
+    "pgserver>=0.1.4,<0.2",
+    "pytest>=9.1,<10",
+    "pytest-asyncio>=1.4,<2",
+    "httpx>=0.28,<0.29",
+    "ruff>=0.17,<0.18",
+    "mypy>=2.4,<3",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ---------------------------------------------------------------------------
+# Lint and format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "C4",       # comprehensions
+    "SIM",      # simplify
+    "RUF",      # ruff-specific
+    "ASYNC",    # async correctness
+    "S",        # bandit security checks
+    "T20",      # no print()
+    "TID",      # tidy imports
+]
+ignore = [
+    "B008",  # FastAPI's Depends() in defaults is the documented idiom
+    "S101",  # assert is fine in tests; see per-file ignores for app code
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S311"]        # test credentials and non-crypto randomness
+"alembic/**" = ["E501", "I001"]              # generated migration headers
+"app/seed/**" = ["E501"]                     # long demo job descriptions
+
+[tool.ruff.lint.flake8-tidy-imports]
+# domain/ must stay pure: no framework, no ORM, no I/O.
+banned-module-level-imports = []
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------------------
+# Type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+files = ["app", "tests"]
+plugins = ["pydantic.mypy"]
+strict = true
+# Migration scripts are generated and intentionally untyped.
+exclude = ["^alembic/"]
+warn_unreachable = true
+disallow_untyped_decorators = false   # FastAPI and pytest decorators
+
+[[tool.mypy.overrides]]
+module = ["pwdlib.*", "sse_starlette.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "unit: pure domain logic. No database, no network. Runs anywhere.",
+    "integration: requires a reachable Postgres. Skipped with a message if absent.",
+    "browser: requires Playwright and Chromium (Phase 5).",
+]
+filterwarnings = ["error::DeprecationWarning:app.*"]
