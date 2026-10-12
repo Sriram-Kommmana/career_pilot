@@ -486,6 +486,33 @@ export interface ApplicationReviewOut {
   last_verified_at: string | null;
 }
 
+export interface ResumeGuidanceItemOut {
+  kind: string;
+  id: string;
+  title: string;
+  organisation: string | null;
+  matched_skills: string[];
+  highlights: string[];
+  reason: string;
+  evidence_ref: Record<string, unknown>;
+}
+
+export type ReadinessStatus = "ready" | "needs_attention" | "missing";
+
+export interface ReadinessChecklistItemOut {
+  category: string;
+  label: string;
+  status: ReadinessStatus;
+  detail: string;
+}
+
+export interface ApplicationPackageOut {
+  fit_summary: MatchAssessmentOut;
+  resume_guidance: ResumeGuidanceItemOut[];
+  readiness_checklist: ReadinessChecklistItemOut[];
+  application: ApplicationDetailOut;
+}
+
 export interface TrackerBoardOut {
   columns: Record<string, ApplicationSummaryOut[]>;
   column_order: string[];

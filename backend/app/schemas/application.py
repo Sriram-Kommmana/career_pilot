@@ -22,7 +22,7 @@ from app.domain.provenance import ProvenanceKind, SensitiveCategory
 from app.domain.redaction import Sensitivity
 from app.domain.states import ApplicationOutcome, ApplicationState
 from app.schemas.common import ApiModel, ApiRequest
-from app.schemas.job import JobSummaryOut
+from app.schemas.job import JobSummaryOut, MatchAssessmentOut
 
 
 class ApplicationFieldOut(ApiModel):
@@ -198,3 +198,48 @@ class ManualSubmissionRequest(ApiRequest):
 class TrackerBoardOut(ApiModel):
     columns: dict[str, list[ApplicationSummaryOut]]
     column_order: list[str]
+
+
+class AnswerQuestionRequest(ApiRequest):
+    question_key: Annotated[str, Field(min_length=1, max_length=300)]
+    value: Annotated[str, Field(min_length=1, max_length=20000)]
+
+
+class ResumeGuidanceItemOut(ApiModel):
+    """One confirmed project or experience record recommended for this job.
+
+    ``evidence_ref`` points at the real record — a recommendation is never a
+    bare opinion, it is always traceable to something the user confirmed.
+    """
+
+    kind: str
+    id: uuid.UUID
+    title: str
+    organisation: str | None
+    matched_skills: list[str]
+    highlights: list[str]
+    reason: str
+    evidence_ref: dict[str, object]
+
+
+class ReadinessChecklistItemOut(ApiModel):
+    category: str
+    label: str
+    status: str
+    detail: str
+
+
+class ApplicationPackageOut(ApiModel):
+    """The deterministic application-preparation package for one job.
+
+    ``fit_summary`` is the existing match assessment, unchanged — a score is
+    still a ranking heuristic here, never a probability. ``application`` is the
+    refreshed detail payload, so the cover letter draft and question drafts
+    (``application.fields``/``application.answers``) are visible in the same
+    response without a second round trip.
+    """
+
+    fit_summary: MatchAssessmentOut
+    resume_guidance: list[ResumeGuidanceItemOut] = Field(default_factory=list)
+    readiness_checklist: list[ReadinessChecklistItemOut] = Field(default_factory=list)
+    application: ApplicationDetailOut

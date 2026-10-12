@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/ErrorState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { DemoDataBadge } from "@/components/DemoDataBadge";
+import { ApplicationPackagePanel, DraftBadge } from "@/components/ApplicationPackagePanel";
 import { formatDateTime, formatStateLabel } from "@/lib/format";
 import {
   ArrowLeft,
@@ -24,9 +25,11 @@ import {
   ExternalLink,
 } from "lucide-react";
 import type {
+  ApplicationAnswerOut,
   ApplicationDetailOut,
   ApplicationFieldOut,
   ApplicationOutcome,
+  ApplicationPackageOut,
   ApplicationReviewOut,
 } from "@/types/api";
 
@@ -46,8 +49,10 @@ export function ApplicationDetail() {
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
   const [fieldDrafts, setFieldDrafts] = useState<Record<string, string>>({});
+  const [answerDrafts, setAnswerDrafts] = useState<Record<string, string>>({});
   const [manualNote, setManualNote] = useState("");
   const [manualConfirmed, setManualConfirmed] = useState(false);
+  const [pkg, setPkg] = useState<ApplicationPackageOut | undefined>(undefined);
 
   const detailQuery = useQuery({
     queryKey: ["application", applicationId],
@@ -81,6 +86,30 @@ export function ApplicationDetail() {
         delete next[variables.field_key];
         return next;
       });
+      invalidate();
+    },
+    onError: (e) => setActionError(describeError(e)),
+  });
+
+  const answerQuestionMutation = useMutation({
+    mutationFn: (payload: { question_key: string; value: string }) =>
+      api.post<ApplicationDetailOut>(`/applications/${applicationId}/answers`, payload),
+    onSuccess: (_, variables) => {
+      setAnswerDrafts((prev) => {
+        const next = { ...prev };
+        delete next[variables.question_key];
+        return next;
+      });
+      invalidate();
+    },
+    onError: (e) => setActionError(describeError(e)),
+  });
+
+  const preparePackageMutation = useMutation({
+    mutationFn: () =>
+      api.post<ApplicationPackageOut>(`/applications/${applicationId}/prepare-package`),
+    onSuccess: (result) => {
+      setPkg(result);
       invalidate();
     },
     onError: (e) => setActionError(describeError(e)),
@@ -240,6 +269,44 @@ export function ApplicationDetail() {
                 ))}
               </CardContent>
             </Card>
+          )}
+
+          {application.answers.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Application questions</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {application.answers.map((answer) => (
+                  <AnswerRow
+                    key={answer.id}
+                    answer={answer}
+                    draft={answerDrafts[answer.question_key] ?? ""}
+                    onDraftChange={(value) =>
+                      setAnswerDrafts((prev) => ({ ...prev, [answer.question_key]: value }))
+                    }
+                    onSubmit={() =>
+                      answerQuestionMutation.mutate({
+                        question_key: answer.question_key,
+                        value: answerDrafts[answer.question_key] ?? "",
+                      })
+                    }
+                    isSaving={
+                      answerQuestionMutation.isPending &&
+                      answerQuestionMutation.variables?.question_key === answer.question_key
+                    }
+                  />
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {canPrepare && (
+            <ApplicationPackagePanel
+              pkg={pkg}
+              isGenerating={preparePackageMutation.isPending}
+              onGenerate={() => preparePackageMutation.mutate()}
+            />
           )}
 
           {application.events.length > 0 && (
@@ -420,6 +487,10 @@ function FieldRow({
   isSaving: boolean;
 }) {
   const needsAnswer = field.resolution === "NEEDS_HUMAN" || field.resolution === "UNKNOWN_FIELD";
+  const isUnreviewedDraft =
+    field.resolution === "RESOLVED" && field.value_provenance === "GENERATED_UNVERIFIED";
+  // Editing starts from the generated text, not a blank box, until the user types.
+  const effectiveDraft = draft || (isUnreviewedDraft ? field.value_masked ?? "" : "");
 
   return (
     <div className="rounded-lg border border-slate-200 p-3.5">
@@ -433,11 +504,29 @@ function FieldRow({
               required
             </Badge>
           )}
+          {isUnreviewedDraft && <DraftBadge />}
         </div>
         <ResolutionBadge resolution={field.resolution} />
       </div>
 
-      {field.resolution === "RESOLVED" ? (
+      {isUnreviewedDraft ? (
+        <div className="mt-2 flex items-start gap-2">
+          <Textarea
+            value={effectiveDraft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            className="flex-1"
+            rows={4}
+          />
+          <Button
+            size="sm"
+            onClick={onSubmit}
+            isLoading={isSaving}
+            disabled={!effectiveDraft.trim()}
+          >
+            Confirm
+          </Button>
+        </div>
+      ) : field.resolution === "RESOLVED" ? (
         <p className="mt-1.5 text-sm text-slate-600">
           {field.value_masked}
           <span className="ml-2 text-xs text-slate-400">
@@ -467,6 +556,64 @@ function FieldRow({
           </Button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function AnswerRow({
+  answer,
+  draft,
+  onDraftChange,
+  onSubmit,
+  isSaving,
+}: {
+  answer: ApplicationAnswerOut;
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
+  isSaving: boolean;
+}) {
+  const isUnreviewedDraft = answer.provenance === "GENERATED_UNVERIFIED" && !!answer.answer_text;
+  const effectiveDraft = draft || (isUnreviewedDraft ? answer.answer_text ?? "" : "");
+  const confirmed = answer.provenance === "USER_DIRECT_INPUT";
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium text-slate-900">{answer.question_text}</p>
+        {isUnreviewedDraft && <DraftBadge />}
+        {confirmed && (
+          <Badge variant="success">
+            <CheckCircle2 className="h-3 w-3" /> Confirmed
+          </Badge>
+        )}
+        {answer.needs_human && !isUnreviewedDraft && (
+          <Badge variant="warning">
+            <HelpCircle className="h-3 w-3" /> Needs you
+          </Badge>
+        )}
+      </div>
+
+      {confirmed ? (
+        <p className="mt-1.5 text-sm text-slate-600">{answer.answer_text}</p>
+      ) : (
+        <div className="mt-2 flex items-start gap-2">
+          <Textarea
+            value={effectiveDraft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            className="flex-1"
+            rows={3}
+          />
+          <Button
+            size="sm"
+            onClick={onSubmit}
+            isLoading={isSaving}
+            disabled={!effectiveDraft.trim()}
+          >
+            {isUnreviewedDraft ? "Confirm" : "Save"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

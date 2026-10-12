@@ -24,7 +24,9 @@ from app.domain.states import TRACKER_COLUMNS, ApplicationState
 from app.models import Application
 from app.schemas.application import (
     AnswerFieldRequest,
+    AnswerQuestionRequest,
     ApplicationDetailOut,
+    ApplicationPackageOut,
     ApplicationReviewOut,
     ApplicationSummaryOut,
     ApproveRequest,
@@ -33,11 +35,15 @@ from app.schemas.application import (
     CreateApplicationRequest,
     ManualSubmissionRequest,
     OutcomeRequest,
+    ReadinessChecklistItemOut,
+    ResumeGuidanceItemOut,
     SubmissionDecisionOut,
     SubmitRequest,
     TrackerBoardOut,
 )
 from app.schemas.common import Page
+from app.schemas.job import MatchAssessmentOut
+from app.services import application_package as package_service
 from app.services import applications as app_service
 
 router = APIRouter(prefix="/applications", tags=["applications"])
@@ -167,6 +173,87 @@ async def answer_field(
         user_id=user_id,
         application_id=application_id,
         field_key=payload.field_key,
+        value=payload.value,
+    )
+    application = await app_service.get_application(
+        session, user_id=user_id, application_id=application_id
+    )
+    return _detail(application)
+
+
+@router.post("/{application_id}/prepare-package", response_model=ApplicationPackageOut)
+async def prepare_package(
+    application_id: ApplicationId,
+    session: DbSession,
+    user_id: CurrentUserId,
+    settings: AppSettings,
+) -> ApplicationPackageOut:
+    """Generate (or refresh) a job-specific application package.
+
+    Produces a fit summary (the existing match assessment — still a ranking
+    heuristic, never a probability), resume-emphasis guidance, a cover-letter
+    draft, and draft answers to two fixed application questions — every one of
+    them grounded only in confirmed profile/resume evidence, never invented.
+    Drafts are clearly marked as such (``GENERATED_UNVERIFIED``); regenerating
+    never overwrites anything the user has already confirmed.
+    """
+    result = await package_service.prepare_package(
+        session, user_id=user_id, application_id=application_id, settings=settings
+    )
+    # Re-fetched rather than reusing result.application directly: get_application's
+    # eager-loads (notably `.job`, lazy="selectin") are what every other route in
+    # this module relies on too — reusing the service's own object risks reading an
+    # expired relationship outside the query that loaded it.
+    application = await app_service.get_application(
+        session, user_id=user_id, application_id=application_id
+    )
+    return ApplicationPackageOut(
+        fit_summary=MatchAssessmentOut.model_validate(result.fit_summary),
+        resume_guidance=[
+            ResumeGuidanceItemOut(
+                kind=item.kind,
+                id=item.id,
+                title=item.title,
+                organisation=item.organisation,
+                matched_skills=list(item.matched_skills),
+                highlights=list(item.highlights),
+                reason=item.reason,
+                evidence_ref={
+                    "kind": item.evidence_ref.kind,
+                    "id": str(item.evidence_ref.id) if item.evidence_ref.id else None,
+                    "locator": item.evidence_ref.locator,
+                },
+            )
+            for item in result.resume_guidance
+        ],
+        readiness_checklist=[
+            ReadinessChecklistItemOut(
+                category=item.category, label=item.label, status=item.status, detail=item.detail
+            )
+            for item in result.readiness_checklist
+        ],
+        application=_detail(application),
+    )
+
+
+@router.post("/{application_id}/answers", response_model=ApplicationDetailOut)
+async def answer_question(
+    application_id: ApplicationId,
+    payload: AnswerQuestionRequest,
+    session: DbSession,
+    user_id: CurrentUserId,
+) -> ApplicationDetailOut:
+    """Answer (or edit) one drafted application question yourself.
+
+    The answer's provenance becomes ``USER_DIRECT_INPUT``. Because this changes
+    the form, the form state hash is recomputed and any existing approval is
+    revoked — the same rule ``/answer`` already applies to a field.
+    """
+    await package_service.answer_question(
+        session,
+        user_id=user_id,
+        application_id=application_id,
+        question_key=payload.question_key,
         value=payload.value,
     )
     application = await app_service.get_application(

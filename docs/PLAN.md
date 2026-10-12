@@ -441,11 +441,27 @@ notifications, via a new `python -m app.cli sweep` command intended for an
 OS-level scheduler (Task Scheduler/cron — see `docs/SCHEDULING.md`), guarded by a
 Postgres advisory lock against overlapping runs, reusing
 `discovery.run_discovery`/`matching.analyze_many`/`notifications.notify_job_matches`
-unchanged. **4B** (not yet built): personalized application preparation —
-auto-advancing a matched job into an `Application` in `PREPARING`. RQ/Redis and
-SSE-over-Redis-pub/sub remain deferred until a genuine multi-process or
-multi-worker need is demonstrated, not built speculatively. Email and Telegram
-remain unimplemented modular adapters.
+unchanged. **4B** (shipped 2026-10-12): personalized application preparation —
+a fit summary, resume-emphasis guidance, a deterministic cover-letter draft,
+two fixed draft application-question answers, and a readiness checklist for a
+selected job, via `POST /applications/{id}/prepare-package` and
+`POST /applications/{id}/answers`. Investigation found the same pattern as 4A:
+`ApplicationAnswer` (question drafts) and the `cover_letter` baseline field
+already existed with zero callers, `MatchAssessment.explanation` already *was*
+the fit summary, and `_recompute_form_state` already invalidated a stale
+approval on any form change — so this shipped with **no migration and no new
+model**, only a new pure domain module (`app.domain.application_package`) and a
+thin orchestrating service reusing `prepare`/`analyze_and_store`/
+`_recompute_form_state` unchanged. Every generated sentence cites only
+confirmed profile/resume evidence (`USER_CONFIRMED_PROFILE`/
+`RESUME_EXTRACTION_CONFIRMED`), is written with `GENERATED_UNVERIFIED`
+provenance, and is editable — editing invalidates a stale approval exactly like
+editing a field already did, verified end to end. No LLM call is made; the
+service layer has a single seam where a future provider could plug in, matching
+`Settings.llm_provider`'s existing deterministic-fallback precedent from Phase
+3. RQ/Redis and SSE-over-Redis-pub/sub remain deferred until a genuine
+multi-process or multi-worker need is demonstrated, not built speculatively.
+Email and Telegram remain unimplemented modular adapters.
 
 ### Phase 5 — browser agent
 
