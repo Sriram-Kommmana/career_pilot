@@ -110,6 +110,11 @@ class NotImplementedPhaseError(AppError):
         )
 
 
+class PayloadTooLargeError(AppError):
+    status_code = 413
+    code = "PAYLOAD_TOO_LARGE"
+
+
 class ExternalServiceError(AppError):
     status_code = 502
     code = "EXTERNAL_SERVICE_ERROR"

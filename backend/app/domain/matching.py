@@ -103,6 +103,25 @@ class CandidateSkill:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileEvidenceItem:
+    """A confirmed, retrievable chunk of career evidence that is not shaped like a
+    :class:`Project`/experience record — most often a resume excerpt that didn't
+    decompose into a structured entry (e.g. a summary or achievements line).
+
+    ``skills`` is computed once, outside the hot scoring path (see
+    ``app.services.profile.build_candidate_profile``), by matching ``content``
+    against the known technology vocabulary — the same mechanism a job requirement
+    is matched against, so "mentioned in your evidence" and "mentioned in a
+    requirement" mean the same thing.
+    """
+
+    content: str
+    skills: frozenset[str] = field(default_factory=frozenset)
+    locator: str | None = None
+    evidence_ref: EvidenceRef | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateProfile:
     """The user's side of the comparison.
 
@@ -128,6 +147,11 @@ class CandidateProfile:
     minimum_salary: float | None = None
     salary_currency: str | None = None
 
+    #: Confirmed free-text evidence (e.g. resume excerpts) that doesn't fit a
+    #: Project/ExperienceRecord shape. Empty by default, so a profile with none
+    #: behaves exactly as it did before this field existed.
+    profile_evidence: tuple[ProfileEvidenceItem, ...] = field(default_factory=tuple)
+
     @property
     def skill_index(self) -> dict[str, CandidateSkill]:
         """Canonical skill name to the richest record for it.
@@ -147,6 +171,17 @@ class CandidateProfile:
     @property
     def canonical_skills(self) -> frozenset[str]:
         return frozenset(self.skill_index)
+
+    @property
+    def profile_evidence_skill_refs(self) -> dict[str, tuple[EvidenceRef, ...]]:
+        """Canonical skill name to the free-text evidence refs that mention it."""
+        result: dict[str, list[EvidenceRef]] = {}
+        for item in self.profile_evidence:
+            if item.evidence_ref is None:
+                continue
+            for skill in item.skills:
+                result.setdefault(skill, []).append(item.evidence_ref)
+        return {skill: tuple(refs) for skill, refs in result.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -511,6 +546,7 @@ def assess_requirements(
     # see domain.skills.IMPLIED_SKILLS.
     vocabulary = expand_with_implied(profile.canonical_skills)
     index = profile.skill_index
+    resume_evidence_refs = profile.profile_evidence_skill_refs
     assessments: list[RequirementAssessment] = []
 
     for text in job.requirement_texts:
@@ -565,6 +601,7 @@ def assess_requirements(
             held = index.get(skill_name)
             if held is not None and held.has_evidence:
                 evidence.extend(held.evidence)
+            evidence.extend(resume_evidence_refs.get(skill_name, ()))
 
         assessments.append(
             RequirementAssessment(
@@ -741,7 +778,16 @@ def _score_evidence(
             rationale=("Requirements were met on non-skill grounds, so evidence was not assessed."),
         )
 
-    evidenced = {s for s in matched_skills if index.get(s) is not None and index[s].has_evidence}
+    resume_evidenced_skills = frozenset(profile.profile_evidence_skill_refs)
+    skill_record_evidenced = {
+        s for s in matched_skills if index.get(s) is not None and index[s].has_evidence
+    }
+    resume_only = {
+        s
+        for s in matched_skills
+        if s in resume_evidenced_skills and s not in skill_record_evidenced
+    }
+    evidenced = skill_record_evidenced | resume_only
     raw = len(evidenced) / len(matched_skills)
     return ComponentScore(
         name="evidence",
@@ -749,11 +795,12 @@ def _score_evidence(
         weight=0.0,
         rationale=(
             f"{len(evidenced)} of {len(matched_skills)} matched skills are backed by a "
-            "project or role on your profile."
+            "project, role, or resume excerpt on your profile."
         ),
         details={
             "evidenced_skills": sorted(evidenced),
             "claimed_only_skills": sorted(matched_skills - evidenced),
+            "resume_evidenced_skills": sorted(resume_only),
         },
     )
 
@@ -974,6 +1021,7 @@ def build_explanation(
 
     evidenced: list[str] = []
     index = profile.skill_index
+    resume_evidence_refs = profile.profile_evidence_skill_refs
     seen: set[str] = set()
     for requirement in requirements:
         if requirement.status is not RequirementStatus.MET:
@@ -982,10 +1030,14 @@ def build_explanation(
             if skill in seen:
                 continue
             held = index.get(skill)
-            if held is not None and held.has_evidence:
-                seen.add(skill)
-                refs = ", ".join(ref.describe() for ref in held.evidence) or "your profile"
-                evidenced.append(f"{held.name} — evidenced by {refs}")
+            refs_list = list(held.evidence) if held is not None and held.has_evidence else []
+            refs_list.extend(resume_evidence_refs.get(skill, ()))
+            if not refs_list:
+                continue
+            seen.add(skill)
+            name = held.name if held is not None else skill
+            refs = ", ".join(ref.describe() for ref in refs_list)
+            evidenced.append(f"{name} — evidenced by {refs}")
 
     missing = [
         r.note or f"Not met: {r.text}"

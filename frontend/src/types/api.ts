@@ -108,6 +108,7 @@ export interface ProjectOut {
   highlights: string[];
   start_date: string | null;
   end_date: string | null;
+  provenance: ProvenanceKind;
 }
 
 export interface ExperienceOut {
@@ -122,6 +123,7 @@ export interface ExperienceOut {
   start_date: string | null;
   end_date: string | null;
   is_current: boolean;
+  provenance: ProvenanceKind;
 }
 
 export interface CertificationOut {
@@ -131,6 +133,7 @@ export interface CertificationOut {
   issued_on: string | null;
   expires_on: string | null;
   credential_url: string | null;
+  provenance: ProvenanceKind;
 }
 
 export interface ProfileOut {
@@ -165,6 +168,8 @@ export interface ProfileOut {
   updated_at: string;
 }
 
+export type ExtractionStatus = "pending" | "succeeded" | "failed";
+
 export interface ResumeOut {
   id: string;
   label: string;
@@ -173,8 +178,68 @@ export interface ResumeOut {
   size_bytes: number;
   content_sha256: string;
   is_default: boolean;
+  extraction_status: ExtractionStatus;
+  extraction_error: string | null;
   extraction_confirmed_at: string | null;
   created_at: string;
+}
+
+export type ExtractedItemField =
+  | "skill"
+  | "education"
+  | "project"
+  | "experience"
+  | "certification"
+  | "achievement";
+
+export type ExtractionConfidence = "high" | "medium" | "low";
+
+export interface ExtractionItemOut {
+  index: number;
+  field: ExtractedItemField;
+  data: Record<string, unknown>;
+  source_excerpt: string;
+  locator: string;
+  confidence: ExtractionConfidence;
+  needs_review: boolean;
+  /** Advisory only. A non-null value never means an automatic merge happened —
+   * see ConfirmExtractionRequest's `existing_record_id`. */
+  possible_duplicate_of: string | null;
+}
+
+export interface ExtractionProposalOut {
+  resume_id: string;
+  extraction_status: ExtractionStatus;
+  items: ExtractionItemOut[];
+  unparsed_sections: string[];
+}
+
+export interface ExtractionDecision {
+  index: number;
+  accept: boolean;
+  /** Set only to update this specific existing record. Omitting it never
+   * replaces anything that already exists — it always adds a new row (or, for
+   * a skill that already exists, does nothing). */
+  existing_record_id?: string | null;
+}
+
+export interface ConfirmExtractionRequest {
+  decisions: ExtractionDecision[];
+}
+
+export type ConfirmExtractionStatus = "created" | "updated" | "skipped" | "rejected";
+
+export interface ConfirmExtractionResultOut {
+  index: number;
+  field: ExtractedItemField;
+  status: ConfirmExtractionStatus;
+  record_id: string | null;
+  message: string | null;
+}
+
+export interface ConfirmExtractionResponse {
+  resume_id: string;
+  results: ConfirmExtractionResultOut[];
 }
 
 // ---------------------------------------------------------------------------

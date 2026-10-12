@@ -24,6 +24,7 @@ from app.domain.matching import (
     FilterCode,
     JobPosting,
     MatchConfig,
+    ProfileEvidenceItem,
     RequirementStatus,
     ScoreKind,
     apply_hard_filters,
@@ -380,6 +381,66 @@ class TestAssessMatch:
         assert with_evidence.score > without_evidence.score
         assert with_evidence.explanation.evidenced_qualifications
         assert not without_evidence.explanation.evidenced_qualifications
+
+    def test_a_profile_with_no_resume_evidence_scores_exactly_as_before(self) -> None:
+        """profile_evidence defaults to empty; a profile that never sets it must
+        behave identically to one from before this field existed."""
+        bare = _profile(skills=(CandidateSkill(name="Python", has_evidence=False),))
+        job = _job(requirement_texts=("Experience with Python",))
+        assessment = assess_match(profile=bare, job=job)
+        evidence = assessment.component("evidence")
+        assert evidence is not None
+        assert evidence.raw == 0.0
+
+    def test_confirmed_resume_evidence_counts_as_evidence_for_a_claimed_skill(self) -> None:
+        """A skill with no project/experience behind it, but mentioned in a
+        confirmed resume excerpt, is scored as evidenced through that excerpt."""
+        claimed_only = CandidateSkill(name="Python", has_evidence=False)
+        without_resume = _profile(skills=(claimed_only,))
+        with_resume = _profile(
+            skills=(claimed_only,),
+            profile_evidence=(
+                ProfileEvidenceItem(
+                    content="Built several services in Python.",
+                    skills=frozenset({"python"}),
+                    locator="resume:section=achievements,line=3",
+                    evidence_ref=EvidenceRef(kind="resume_section", locator="Achievements"),
+                ),
+            ),
+        )
+        job = _job(requirement_texts=("Experience with Python",))
+
+        before = assess_match(profile=without_resume, job=job)
+        after = assess_match(profile=with_resume, job=job)
+
+        before_evidence = before.component("evidence")
+        after_evidence = after.component("evidence")
+        assert before_evidence is not None
+        assert after_evidence is not None
+        assert before_evidence.raw == 0.0
+        assert after_evidence.raw == 1.0
+        assert after.score is not None
+        assert before.score is not None
+        assert after.score > before.score
+        assert after.explanation.evidenced_qualifications
+
+    def test_resume_evidence_with_no_matching_skills_changes_nothing(self) -> None:
+        profile_with_unrelated_evidence = _profile(
+            skills=(CandidateSkill(name="Python", has_evidence=False),),
+            profile_evidence=(
+                ProfileEvidenceItem(
+                    content="Enjoys hiking and photography.",
+                    skills=frozenset(),
+                    locator="resume:section=achievements,line=9",
+                    evidence_ref=EvidenceRef(kind="resume_section", locator="Achievements"),
+                ),
+            ),
+        )
+        job = _job(requirement_texts=("Experience with Python",))
+        assessment = assess_match(profile=profile_with_unrelated_evidence, job=job)
+        evidence = assessment.component("evidence")
+        assert evidence is not None
+        assert evidence.raw == 0.0
 
     def test_posting_with_no_requirements_does_not_penalise_the_candidate(self) -> None:
         assessment = assess_match(profile=_profile(), job=_job(requirement_texts=()))

@@ -73,6 +73,7 @@ class ProjectOut(ApiModel):
     highlights: list[str]
     start_date: date | None
     end_date: date | None
+    provenance: ProvenanceKind
 
 
 class ProjectIn(ApiRequest):
@@ -104,6 +105,7 @@ class ExperienceOut(ApiModel):
     start_date: date | None
     end_date: date | None
     is_current: bool
+    provenance: ProvenanceKind
 
 
 class ExperienceIn(ApiRequest):
@@ -126,6 +128,7 @@ class CertificationOut(ApiModel):
     issued_on: date | None
     expires_on: date | None
     credential_url: str | None
+    provenance: ProvenanceKind
 
 
 class CertificationIn(ApiRequest):
@@ -235,16 +238,3 @@ class ProfileUpdate(ApiRequest):
                 if value is not None
             }
         return payload
-
-
-class ResumeOut(ApiModel):
-    id: uuid.UUID
-    label: str
-    original_filename: str
-    content_type: str
-    size_bytes: int
-    content_sha256: str
-    is_default: bool
-    #: Until this is set, facts extracted from the file are not authoritative.
-    extraction_confirmed_at: datetime | None
-    created_at: datetime

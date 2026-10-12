@@ -31,15 +31,20 @@ dependencies = [
     # Outbound HTTP for job-board connectors (app/connectors/). A core dependency,
     # not an optional extra: POST /jobs/discover needs it to work out of the box.
     "httpx>=0.28,<0.29",
+    # Resume text extraction (app/services/resumes.py). A core dependency: resume
+    # upload needs to work out of the box, with no LLM provider configured.
+    "pypdf>=6.20,<7",
+    "python-docx>=1.1,<2",
 ]
 
 [project.optional-dependencies]
-# Phase 3 — resume extraction, evidence retrieval, agent graph
+# Phase 3+ — a real LLM-backed extraction/retrieval path. Not needed for the
+# deterministic resume pipeline in app/domain/resume_extraction.py, which needs no
+# API key; see docs/PLAN.md section 8.
 agents = [
     "langgraph>=1.2,<2",
     "langchain-core>=1.6,<2",
     "pgvector>=0.5,<0.6",
-    "pypdf>=6.20,<7",
 ]
 # Phase 4 — queues and workers
 workers = [

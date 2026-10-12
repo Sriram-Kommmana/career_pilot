@@ -6,6 +6,7 @@ import { Dashboard } from "@/pages/Dashboard";
 import { JobFeed } from "@/pages/JobFeed";
 import { JobDetail } from "@/pages/JobDetail";
 import { Profile } from "@/pages/Profile";
+import { Resumes } from "@/pages/Resumes";
 import { Tracker } from "@/pages/Tracker";
 import { ApplicationDetail } from "@/pages/ApplicationDetail";
 import { Notifications } from "@/pages/Notifications";
@@ -30,6 +31,7 @@ export function App() {
         <Route path="/jobs" element={<JobFeed />} />
         <Route path="/jobs/:jobId" element={<JobDetail />} />
         <Route path="/profile" element={<Profile />} />
+        <Route path="/resumes" element={<Resumes />} />
         <Route path="/tracker" element={<Tracker />} />
         <Route path="/applications/:applicationId" element={<ApplicationDetail />} />
         <Route path="/notifications" element={<Notifications />} />

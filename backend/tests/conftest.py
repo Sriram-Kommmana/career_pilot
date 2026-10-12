@@ -14,11 +14,32 @@ schema is created and dropped per session, so a test run cannot touch developmen
 
 from __future__ import annotations
 
+import atexit
+import os
+import shutil
+import tempfile
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Storage isolation
+#
+# Settings.storage_dir has no test-specific counterpart the way the database
+# does — a resume upload test writes a real file wherever CAREERPILOT_STORAGE_DIR
+# points, which defaults to the same var/storage/ a developer's own dev server
+# uses. Redirecting it here, before anything imports app.core.config (so this
+# runs before Settings is ever constructed, and before its process-wide
+# @lru_cache'd get_settings() is first called), keeps a test run from leaving
+# real files mixed into development data — the same guarantee the module
+# docstring above already makes for the database.
+# ---------------------------------------------------------------------------
+
+_test_storage_dir = tempfile.mkdtemp(prefix="careerpilot-test-storage-")
+os.environ.setdefault("CAREERPILOT_STORAGE_DIR", _test_storage_dir)
+atexit.register(shutil.rmtree, _test_storage_dir, ignore_errors=True)
 
 # ---------------------------------------------------------------------------
 # Database availability

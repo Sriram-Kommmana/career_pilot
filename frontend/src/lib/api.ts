@@ -108,12 +108,51 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return data as T;
 }
 
+/**
+ * A multipart POST — file upload, not JSON. Kept separate from `request()`
+ * rather than bolted on with an `isFormData` flag: a `FormData` body must never
+ * get a `Content-Type` header set by hand (the browser has to generate the
+ * multipart boundary itself), and that's an easy rule to break silently.
+ */
+async function postForm<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(buildUrl(path), {
+    method: "POST",
+    headers,
+    body: form,
+    signal,
+  });
+
+  const text = await response.text();
+  const data: unknown = text ? JSON.parse(text) : undefined;
+
+  if (!response.ok) {
+    const envelope = data as ErrorEnvelope | undefined;
+    if (envelope?.error) {
+      throw new ApiError(response.status, envelope.error);
+    }
+    throw new ApiError(response.status, {
+      code: "UNKNOWN_ERROR",
+      message: response.statusText || "Request failed.",
+      correlation_id: "",
+    });
+  }
+
+  return data as T;
+}
+
 export const api = {
   get: <T>(path: string, params?: RequestOptions["params"]) =>
     request<T>(path, { method: "GET", params }),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  postForm,
 };
 
 export { BASE_URL };

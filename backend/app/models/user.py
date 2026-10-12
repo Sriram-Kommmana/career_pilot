@@ -301,6 +301,15 @@ class Resume(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     extracted_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     extraction_payload: Mapped[dict[str, object] | None] = mapped_column(nullable=True)
     extraction_confirmed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    #: "pending" (never run) | "succeeded" (proposal staged, maybe partially
+    #: confirmed) | "failed" (see extraction_error). Separate from
+    #: extraction_confirmed_at, which only tracks user confirmation.
+    extraction_status: Mapped[str] = mapped_column(
+        sa.String(20), nullable=False, default="pending"
+    )
+    #: Short, human-readable reason the last extraction attempt failed. Never the raw
+    #: exception text or any resume content — see docs/SAFETY.md section 8.
+    extraction_error: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="resumes")
 

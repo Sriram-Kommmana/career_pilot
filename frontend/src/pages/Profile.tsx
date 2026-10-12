@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/ErrorState";
-import { Plus, Trash2, Sparkles } from "lucide-react";
+import { Plus, Trash2, Sparkles, FileText } from "lucide-react";
 import type { ProfileOut } from "@/types/api";
 
 export function Profile() {
@@ -449,7 +449,10 @@ function ProjectsCard({ profile, onChanged }: { profile: ProfileOut; onChanged: 
               className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 p-3"
             >
               <div>
-                <p className="text-sm font-medium text-slate-900">{project.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-slate-900">{project.name}</p>
+                  <ResumeBadge provenance={project.provenance} />
+                </div>
                 {project.description && (
                   <p className="mt-0.5 text-sm text-slate-500">{project.description}</p>
                 )}
@@ -555,9 +558,12 @@ function ExperienceCard({ profile, onChanged }: { profile: ProfileOut; onChanged
               className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 p-3"
             >
               <div>
-                <p className="text-sm font-medium text-slate-900">
-                  {record.title} at {record.company}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-slate-900">
+                    {record.title} at {record.company}
+                  </p>
+                  <ResumeBadge provenance={record.provenance} />
+                </div>
                 {record.is_current && (
                   <Badge variant="success" className="mt-1">
                     Current
@@ -656,7 +662,10 @@ function EducationCard({ profile, onChanged }: { profile: ProfileOut; onChanged:
               className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 p-3"
             >
               <div>
-                <p className="text-sm font-medium text-slate-900">{record.institution}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-slate-900">{record.institution}</p>
+                  <ResumeBadge provenance={record.provenance} />
+                </div>
                 <p className="text-sm text-slate-500">{record.degree}</p>
               </div>
               <button
@@ -739,7 +748,10 @@ function CertificationsCard({ profile, onChanged }: { profile: ProfileOut; onCha
               className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 p-3"
             >
               <div>
-                <p className="text-sm font-medium text-slate-900">{cert.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-slate-900">{cert.name}</p>
+                  <ResumeBadge provenance={cert.provenance} />
+                </div>
                 {cert.issuer && <p className="text-sm text-slate-500">{cert.issuer}</p>}
               </div>
               <button
@@ -777,6 +789,15 @@ function CertificationsCard({ profile, onChanged }: { profile: ProfileOut; onCha
 // ---------------------------------------------------------------------------
 // Shared
 // ---------------------------------------------------------------------------
+
+function ResumeBadge({ provenance }: { provenance: string }) {
+  if (provenance !== "RESUME_EXTRACTION_CONFIRMED") return null;
+  return (
+    <Badge variant="outline" className="gap-1">
+      <FileText className="h-3 w-3" /> From resume
+    </Badge>
+  );
+}
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (

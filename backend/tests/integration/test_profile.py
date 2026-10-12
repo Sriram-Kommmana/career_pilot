@@ -214,3 +214,54 @@ class TestChildRecordOwnership:
         )
         assert first.status_code == 201
         assert second.status_code == 201
+
+
+class TestProvenanceExposure:
+    """Every child collection carries ``provenance`` in its API response, not just
+    education and skills. A reader of the profile (or the Resumes review screen)
+    needs to tell "I typed this" apart from "a confirmed resume extraction wrote
+    this" for every kind of record, not just two of the five."""
+
+    async def test_a_manually_added_project_reports_user_confirmed_provenance(
+        self, client: object, api: str, auth: dict[str, str]
+    ) -> None:
+        response = await client.post(  # type: ignore[attr-defined]
+            f"{api}/profile/projects", headers=auth, json={"name": "Hand-typed project"}
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["provenance"] == "USER_CONFIRMED_PROFILE"
+
+    async def test_a_manually_added_experience_record_reports_user_confirmed_provenance(
+        self, client: object, api: str, auth: dict[str, str]
+    ) -> None:
+        response = await client.post(  # type: ignore[attr-defined]
+            f"{api}/profile/experience",
+            headers=auth,
+            json={"company": "Acme", "title": "Engineer"},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["provenance"] == "USER_CONFIRMED_PROFILE"
+
+    async def test_a_manually_added_certification_reports_user_confirmed_provenance(
+        self, client: object, api: str, auth: dict[str, str]
+    ) -> None:
+        response = await client.post(  # type: ignore[attr-defined]
+            f"{api}/profile/certifications", headers=auth, json={"name": "Hand-typed cert"}
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["provenance"] == "USER_CONFIRMED_PROFILE"
+
+    async def test_the_full_profile_read_exposes_provenance_on_every_child_collection(
+        self, client: object, api: str, auth: dict[str, str]
+    ) -> None:
+        await client.post(f"{api}/profile/projects", headers=auth, json={"name": "P"})  # type: ignore[attr-defined]
+        await client.post(  # type: ignore[attr-defined]
+            f"{api}/profile/experience", headers=auth, json={"company": "C", "title": "T"}
+        )
+        await client.post(f"{api}/profile/certifications", headers=auth, json={"name": "X"})  # type: ignore[attr-defined]
+
+        profile = await client.get(f"{api}/profile", headers=auth)  # type: ignore[attr-defined]
+        body = profile.json()
+        assert all("provenance" in p for p in body["projects"])
+        assert all("provenance" in e for e in body["experience_records"])
+        assert all("provenance" in c for c in body["certifications"])

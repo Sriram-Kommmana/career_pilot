@@ -23,6 +23,12 @@ export function formatPostedDate(
   return precision === "DATE_ONLY" ? formatted : `${formatted} (exact)`;
 }
 
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function formatRelativeObserved(lastObservedAt: string): string {
   const diffMs = Date.now() - new Date(lastObservedAt).getTime();
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));

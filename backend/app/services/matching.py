@@ -16,6 +16,7 @@ user was previously shown.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import asdict
 
 from sqlalchemy import select
@@ -32,8 +33,12 @@ from app.domain.matching import (
     assess_match,
 )
 from app.domain.normalize import SalaryRange
-from app.models import Job, JobMatchAssessment, Profile
-from app.services.profile import build_candidate_profile, get_profile
+from app.models import Job, JobMatchAssessment, Profile, ProfileEvidence
+from app.services.profile import (
+    build_candidate_profile,
+    get_confirmed_profile_evidence,
+    get_profile,
+)
 
 
 def to_domain_job(job: Job) -> DomainJob:
@@ -69,10 +74,11 @@ def assess(
     profile: Profile,
     job: Job,
     settings: Settings | None = None,
+    profile_evidence: Sequence[ProfileEvidence] = (),
 ) -> MatchAssessment:
     """Score one job for one profile. No I/O."""
     return assess_match(
-        profile=build_candidate_profile(profile),
+        profile=build_candidate_profile(profile, profile_evidence=profile_evidence),
         job=to_domain_job(job),
         config=config_from_settings(settings),
     )
@@ -138,7 +144,8 @@ async def analyze_and_store(
 ) -> tuple[JobMatchAssessment, MatchAssessment]:
     """Assess a job and upsert the stored assessment for this (user, job) pair."""
     profile = await get_profile(session, user_id=user_id)
-    assessment = assess(profile=profile, job=job, settings=settings)
+    evidence_rows = await get_confirmed_profile_evidence(session, user_id=user_id)
+    assessment = assess(profile=profile, job=job, settings=settings, profile_evidence=evidence_rows)
     payload = serialise_assessment(assessment)
 
     result = await session.execute(
@@ -188,7 +195,8 @@ async def analyze_many(
         return {}
 
     profile = await get_profile(session, user_id=user_id)
-    candidate = build_candidate_profile(profile)
+    evidence_rows = await get_confirmed_profile_evidence(session, user_id=user_id)
+    candidate = build_candidate_profile(profile, profile_evidence=evidence_rows)
     config = config_from_settings(settings)
 
     existing_rows = await session.execute(

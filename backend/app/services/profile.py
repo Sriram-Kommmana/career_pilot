@@ -15,6 +15,7 @@ consumes. Two rules are applied in that conversion and nowhere else:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
@@ -25,15 +26,26 @@ from sqlalchemy.orm import selectinload
 
 from app.core.clock import utcnow
 from app.core.errors import ConflictError, NotFoundError
-from app.domain.matching import CandidateProfile, CandidateSkill, EducationLevel
+from app.domain.matching import (
+    CandidateProfile,
+    CandidateSkill,
+    EducationLevel,
+    ProfileEvidenceItem,
+)
 from app.domain.normalize import EmploymentType
 from app.domain.provenance import EvidenceRef
-from app.domain.skills import canonical_skill
+from app.domain.skills import (
+    KNOWN_TECHNOLOGIES,
+    canonical_skill,
+    canonical_skill_set,
+    extract_skill_mentions,
+)
 from app.models import (
     Certification,
     EducationRecord,
     ExperienceRecord,
     Profile,
+    ProfileEvidence,
     Project,
     Skill,
 )
@@ -169,7 +181,28 @@ def compute_total_experience_months(
     return sum(_months_between(start, end) for start, end in merged)
 
 
-def build_candidate_profile(profile: Profile, *, today: date | None = None) -> CandidateProfile:
+async def get_confirmed_profile_evidence(
+    session: AsyncSession, *, user_id: uuid.UUID
+) -> list[ProfileEvidence]:
+    """Confirmed free-text evidence (e.g. resume excerpts) for the match engine.
+
+    ``approved_at`` is the gate, same principle as ``Resume.extraction_confirmed_at``:
+    a row that exists but has not been explicitly approved is not used for matching.
+    """
+    result = await session.execute(
+        select(ProfileEvidence).where(
+            ProfileEvidence.user_id == user_id, ProfileEvidence.approved_at.is_not(None)
+        )
+    )
+    return list(result.scalars().all())
+
+
+def build_candidate_profile(
+    profile: Profile,
+    *,
+    today: date | None = None,
+    profile_evidence: Sequence[ProfileEvidence] = (),
+) -> CandidateProfile:
     """Convert stored rows into the pure input the match engine takes.
 
     This is the only place the ORM and the matching domain meet, which is what lets
@@ -208,6 +241,19 @@ def build_candidate_profile(profile: Profile, *, today: date | None = None) -> C
         for skill in profile.skills
     )
 
+    evidence_items = tuple(
+        ProfileEvidenceItem(
+            content=row.content,
+            skills=canonical_skill_set(row.skills)
+            | extract_skill_mentions(row.content, vocabulary=KNOWN_TECHNOLOGIES),
+            locator=row.locator,
+            evidence_ref=EvidenceRef(
+                kind=row.source_kind, id=row.id, locator=row.locator, excerpt=row.content
+            ),
+        )
+        for row in profile_evidence
+    )
+
     employment_preferences: list[EmploymentType] = []
     for raw in profile.employment_preferences:
         try:
@@ -232,6 +278,7 @@ def build_candidate_profile(profile: Profile, *, today: date | None = None) -> C
         excluded_locations=tuple(profile.excluded_locations),
         minimum_salary=float(profile.minimum_salary) if profile.minimum_salary else None,
         salary_currency=profile.salary_currency,
+        profile_evidence=evidence_items,
     )
 
 
