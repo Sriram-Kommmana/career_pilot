@@ -148,6 +148,10 @@ class Settings(BaseSettings):
     connector_user_agent: str = "CareerPilot/0.1"
     connector_rate_limit_per_minute: Annotated[int, Field(ge=1, le=600)] = 20
     connector_max_retries: Annotated[int, Field(ge=0, le=10)] = 3
+    #: Per-request timeout for a connector's HTTP calls. Short on purpose: a source
+    #: that cannot answer within this window should fail fast and let discovery
+    #: move on to the next source, not hold up the whole run.
+    connector_timeout_seconds: Annotated[float, Field(ge=1.0, le=60.0)] = 10.0
 
     @field_validator("cors_origins", mode="before")
     @classmethod

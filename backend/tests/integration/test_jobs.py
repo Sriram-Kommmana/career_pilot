@@ -136,6 +136,69 @@ class TestFeed:
         # Greenhouse is preferred over a career-page wrapper.
         assert items[0]["job"]["source"] == "greenhouse"
 
+    async def test_two_distinct_postings_from_the_same_source_stay_separate(
+        self, client: object, session: object, api: str, auth: dict[str, str]
+    ) -> None:
+        """Two separate requisitions at one company, from the same source, can share
+        title/company/location (e.g. two "Backend Engineer, Remote" openings). They
+        have different ``source_job_id``s, so they are genuinely different postings
+        and must not be collapsed into one feed row by the cross-source dedup
+        heuristic — that heuristic is only for the same role listed on *different*
+        sources (see ``test_cross_source_duplicates_collapse_to_one_feed_row``)."""
+        await _seed(
+            session,
+            source="greenhouse",
+            source_job_id="gh-req-1",
+            company_name="Lumen Systems",
+            title="Backend Engineer",
+            location_raw="Remote - India",
+            external_key="gh-board",
+        )
+        await _seed(
+            session,
+            source="greenhouse",
+            source_job_id="gh-req-2",
+            company_name="Lumen Systems",
+            title="Backend Engineer",
+            location_raw="Remote - India",
+            external_key="gh-board",
+        )
+        await session.commit()  # type: ignore[attr-defined]
+
+        response = await client.get(f"{api}/jobs", headers=auth)  # type: ignore[attr-defined]
+        items = response.json()["items"]
+        assert len(items) == 2
+        # Neither is reported as "also listed elsewhere" — both are from one source.
+        assert {i["job"]["source_count"] for i in items} == {1}
+
+        detail = await client.get(  # type: ignore[attr-defined]
+            f"{api}/jobs/{items[0]['job']['id']}", headers=auth
+        )
+        assert detail.json()["duplicates"] == []
+
+    async def test_refetching_the_same_posting_does_not_create_a_duplicate_row(
+        self, client: object, session: object, api: str, auth: dict[str, str]
+    ) -> None:
+        """Re-ingesting the same (source, source_job_id) twice — as a connector
+        re-run would — must update the one existing row, not add a second one that
+        would then look like a same-source fingerprint collision."""
+        for _ in range(2):
+            await _seed(
+                session,
+                source="greenhouse",
+                source_job_id="gh-req-1",
+                company_name="Lumen Systems",
+                title="Backend Engineer",
+                location_raw="Remote - India",
+                external_key="gh-board",
+            )
+        await session.commit()  # type: ignore[attr-defined]
+
+        response = await client.get(f"{api}/jobs", headers=auth)  # type: ignore[attr-defined]
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["job"]["source_count"] == 1
+
     async def test_the_non_canonical_duplicate_is_kept_not_deleted(
         self, client: object, session: object, api: str, auth: dict[str, str]
     ) -> None:
@@ -246,12 +309,21 @@ class TestDetailAndAnalyze:
         assert first.json()["score"] == second.json()["score"]
         assert first.json()["explanation"] == second.json()["explanation"]
 
-    async def test_discover_is_not_implemented_in_phase_1(
+    async def test_discover_with_nothing_configured_returns_an_empty_result(
         self, client: object, api: str, auth: dict[str, str]
     ) -> None:
-        """Phase 2 adds live connectors. This must say so, not pretend to search."""
+        """Phase 2's live discovery, with no board tokens and nothing pre-configured.
+
+        An empty ``sources`` list means "re-run whatever is already configured" —
+        with nothing configured yet, that is honestly an empty result, not an error
+        and not a fabricated search. The full Greenhouse connector behaviour (mocked
+        HTTP responses, retries, partial failures, closed-job detection) is covered
+        in ``tests/integration/test_discovery.py``.
+        """
         response = await client.post(  # type: ignore[attr-defined]
             f"{api}/jobs/discover", headers=auth, json={"sources": []}
         )
-        assert response.status_code == 501
-        assert response.json()["error"]["code"] == "NOT_IMPLEMENTED_YET"
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["sources"] == []
+        assert "agent_run_id" in body

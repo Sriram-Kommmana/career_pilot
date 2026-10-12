@@ -28,13 +28,12 @@ dependencies = [
     "sse-starlette>=3.5,<4",
     "python-multipart>=0.0.32,<0.1",
     "tenacity>=9.2,<10",
+    # Outbound HTTP for job-board connectors (app/connectors/). A core dependency,
+    # not an optional extra: POST /jobs/discover needs it to work out of the box.
+    "httpx>=0.28,<0.29",
 ]
 
 [project.optional-dependencies]
-# Phase 2 — ATS connectors
-connectors = [
-    "httpx>=0.28,<0.29",
-]
 # Phase 3 — resume extraction, evidence retrieval, agent graph
 agents = [
     "langgraph>=1.2,<2",

@@ -117,11 +117,22 @@ def default_source_priority() -> int:
     return _DEFAULT_SOURCE_PRIORITY
 
 
+def _has_duplicate_source_key(indices: Sequence[int], source_keys: Sequence[object]) -> bool:
+    seen: set[object] = set()
+    for index in indices:
+        key = source_keys[index]
+        if key in seen:
+            return True
+        seen.add(key)
+    return False
+
+
 def group_duplicates(
     jobs: Sequence[_FingerprintableJob],
     *,
     locations: Sequence[str | None] | None = None,
     sources: Sequence[str] | None = None,
+    source_keys: Sequence[object] | None = None,
 ) -> list[DuplicateGroup]:
     """Group a batch of jobs by fingerprint, preserving input order.
 
@@ -131,11 +142,28 @@ def group_duplicates(
 
     The canonical record is the one from the most preferred source; ties go to the
     earliest in the input, which keeps the result stable.
+
+    ``source_keys``, if given, identifies the *specific* source instance each job
+    came from (for example a ``job_source_id``) rather than just its connector
+    ``kind`` — two different employers' Greenhouse boards both have kind
+    ``"greenhouse"`` but are not the same source. A fingerprint bucket containing
+    more than one job from the same ``source_keys`` value is one source listing
+    two genuinely distinct postings that happen to normalise to the same
+    company/title/location (for example two open "Backend Engineer" requisitions
+    at the same company). The uniqueness constraint on ``(source, source_job_id)``
+    already proves those are different postings, so they must stay separately
+    discoverable. We also cannot tell, in that situation, which (if any) of them
+    is the "same role" as another source's listing with the same fingerprint, so
+    the whole bucket is left ungrouped rather than guessing wrong — cross-source
+    deduplication still applies normally to every fingerprint that has no such
+    same-source collision.
     """
     if locations is not None and len(locations) != len(jobs):
         raise ValueError("locations must be the same length as jobs")
     if sources is not None and len(sources) != len(jobs):
         raise ValueError("sources must be the same length as jobs")
+    if source_keys is not None and len(source_keys) != len(jobs):
+        raise ValueError("source_keys must be the same length as jobs")
 
     buckets: dict[str, list[int]] = {}
     for index, job in enumerate(jobs):
@@ -147,6 +175,14 @@ def group_duplicates(
 
     groups: list[DuplicateGroup] = []
     for fingerprint, indices in buckets.items():
+        if source_keys is not None and _has_duplicate_source_key(indices, source_keys):
+            for index in indices:
+                groups.append(
+                    DuplicateGroup(
+                        fingerprint=fingerprint, indices=(index,), canonical_index=index
+                    )
+                )
+            continue
         if sources is None:
             canonical = indices[0]
         else:
@@ -166,6 +202,7 @@ def dedupe_keep_canonical(
     *,
     locations: Sequence[str | None] | None = None,
     sources: Sequence[str] | None = None,
+    source_keys: Sequence[object] | None = None,
 ) -> list[int]:
     """Indices of the canonical record of each group, in first-seen order.
 
@@ -173,7 +210,7 @@ def dedupe_keep_canonical(
     non-canonical records remain available on the job detail view as alternative
     places to apply.
     """
-    groups = group_duplicates(jobs, locations=locations, sources=sources)
+    groups = group_duplicates(jobs, locations=locations, sources=sources, source_keys=source_keys)
     return sorted(group.canonical_index for group in groups)
 
 

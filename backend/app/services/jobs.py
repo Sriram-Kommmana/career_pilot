@@ -74,6 +74,20 @@ def _source_priority_expression() -> sa.Case[int]:
     )
 
 
+def _ambiguous_fingerprints() -> Select[str]:
+    """Fingerprints where one specific source has more than one posting.
+
+    Scoped to the whole table, not the current filters: fingerprint ambiguity is a
+    structural fact about what a source actually published, not something that
+    should flicker as the feed's filters change.
+    """
+    return (
+        select(Job.fingerprint)
+        .group_by(Job.fingerprint, Job.job_source_id)
+        .having(func.count() > 1)
+    )
+
+
 def _apply_filters[StatementT: Select[Any]](
     statement: StatementT, filters: JobFilters
 ) -> StatementT:
@@ -122,12 +136,24 @@ async def list_jobs(
     id_query = _apply_filters(id_query, active_filters)
 
     if active_filters.collapse_duplicates:
-        # One row per fingerprint, preferring the source the employer actually uses.
-        # DISTINCT ON requires the distinct column to lead the ORDER BY. The
+        # One row per fingerprint, preferring the source the employer actually uses —
+        # except when a single source has more than one posting sharing that
+        # fingerprint (e.g. two distinct "Backend Engineer, Remote" requisitions at
+        # the same company). The uniqueness constraint on (job_source_id,
+        # source_job_id) already proves those are genuinely different postings, and
+        # with two same-source candidates there is no way to tell which (if either)
+        # is really the same role as a different source's listing, so that whole
+        # fingerprint is left uncollapsed rather than guessing. See
+        # ``app.domain.dedup.group_duplicates`` for the equivalent pure-domain logic.
+        collapse_key = sa.case(
+            (Job.fingerprint.in_(_ambiguous_fingerprints()), sa.cast(Job.id, sa.String)),
+            else_=Job.fingerprint,
+        )
+        # DISTINCT ON requires the distinct expression to lead the ORDER BY. The
         # positional-argument form of .distinct() is deprecated as of SQLAlchemy
         # 2.1 in favour of the postgresql.distinct_on() extension construct.
-        id_query = id_query.ext(distinct_on(Job.fingerprint)).order_by(
-            Job.fingerprint,
+        id_query = id_query.ext(distinct_on(collapse_key)).order_by(
+            collapse_key,
             _source_priority_expression(),
             Job.last_observed_at.desc(),
         )
@@ -154,15 +180,18 @@ async def list_jobs(
 
 
 async def count_duplicates(session: AsyncSession, fingerprints: list[str]) -> dict[str, int]:
-    """How many stored rows share each fingerprint.
+    """How many distinct *sources* list each fingerprint.
 
     Used to tell the user a role is also listed elsewhere, without loading the other
-    rows into the feed response.
+    rows into the feed response. Counts distinct ``job_source_id``, not raw rows: one
+    source occasionally has two genuinely different postings that happen to share a
+    fingerprint (see ``app.domain.dedup``), and that must not be reported as "listed
+    on 2 sources."
     """
     if not fingerprints:
         return {}
     result = await session.execute(
-        select(Job.fingerprint, func.count())
+        select(Job.fingerprint, func.count(func.distinct(Job.job_source_id)))
         .where(Job.fingerprint.in_(fingerprints))
         .group_by(Job.fingerprint)
     )
@@ -191,10 +220,19 @@ async def find_duplicates(session: AsyncSession, job: Job) -> list[Job]:
     Used on the job detail page to show alternative places to apply. These rows are
     never deleted; cross-source identity is a heuristic, and a heuristic must not be
     able to destroy data.
+
+    Restricted to *other* sources: a fingerprint match within the same
+    ``job_source_id`` is two distinct postings the source itself published (proven
+    distinct by the ``(job_source_id, source_job_id)`` uniqueness constraint), not an
+    alternative way to apply for this role — see ``app.domain.dedup`` module docstring.
     """
     result = await session.execute(
         select(Job)
-        .where(Job.fingerprint == job.fingerprint, Job.id != job.id)
+        .where(
+            Job.fingerprint == job.fingerprint,
+            Job.id != job.id,
+            Job.job_source_id != job.job_source_id,
+        )
         .options(selectinload(Job.company), selectinload(Job.job_source))
     )
     return list(result.scalars().all())

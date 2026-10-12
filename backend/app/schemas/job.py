@@ -170,6 +170,41 @@ class JobListQuery(ApiRequest):
 
 
 class DiscoverRequest(ApiRequest):
-    """Request body for ``POST /jobs/discover`` (Phase 2)."""
+    """Request body for ``POST /jobs/discover``.
+
+    ``sources`` is a list of Greenhouse board tokens to fetch (e.g. ``["gitlab"]``
+    for ``https://boards.greenhouse.io/gitlab``). An empty list re-runs every
+    already-configured, enabled Greenhouse source instead of doing nothing, so the
+    same endpoint covers both "try this new board" and "refresh what I have."
+    """
 
     sources: list[str] = Field(default_factory=list, max_length=20)
+
+
+class DiscoverSourceResultOut(ApiModel):
+    """What happened fetching one board."""
+
+    kind: str
+    source: str = Field(description="The board token or other source-specific key.")
+    status: Literal["ok", "failed"]
+    jobs_seen: int
+    jobs_created: int
+    jobs_updated: int
+    #: Previously-open postings from this source that were not seen in this fetch
+    #: and so are now marked closed. The rows are kept, never deleted.
+    jobs_closed: int
+    error: str | None = None
+    duration_ms: int
+    retry_count: int
+
+
+class DiscoverResponseOut(ApiModel):
+    """The full result of one ``POST /jobs/discover`` call.
+
+    Runs synchronously within the request — Phase 2 has no background worker yet
+    (that arrives in Phase 4), so the response only returns once every requested
+    source has been attempted.
+    """
+
+    agent_run_id: uuid.UUID
+    sources: list[DiscoverSourceResultOut] = Field(default_factory=list)

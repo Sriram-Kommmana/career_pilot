@@ -328,6 +328,57 @@ class TestGrouping:
         with pytest.raises(ValueError, match="same length"):
             group_duplicates([_Row("Acme", "Engineer")], locations=[])
 
+    def test_two_distinct_postings_from_the_same_source_are_not_grouped(self) -> None:
+        """Two separate requisitions at one company can share title/company/location
+        (e.g. two 'Backend Engineer, Remote' openings). ``source_keys`` identifies the
+        specific source each came from; a fingerprint bucket where one source_key
+        repeats is two genuinely distinct postings, not a duplicate of each other."""
+        rows = [_Row("Acme", "Backend Engineer"), _Row("Acme", "Backend Engineer")]
+        groups = group_duplicates(
+            rows,
+            locations=["Remote", "Remote"],
+            sources=["greenhouse", "greenhouse"],
+            source_keys=["gh-board-acme", "gh-board-acme"],
+        )
+        assert len(groups) == 2
+        assert all(not g.is_duplicate for g in groups)
+        assert sorted(g.canonical_index for g in groups) == [0, 1]
+
+    def test_cross_source_duplicates_still_group_when_source_keys_are_distinct(self) -> None:
+        rows = [_Row("Acme", "Backend Engineer"), _Row("Acme", "Backend Engineer")]
+        groups = group_duplicates(
+            rows,
+            locations=["Remote", "Remote"],
+            sources=["career_page", "greenhouse"],
+            source_keys=["acme-careers", "gh-board-acme"],
+        )
+        assert len(groups) == 1
+        assert groups[0].is_duplicate
+        # Greenhouse (index 1) is still preferred over the career page (index 0).
+        assert groups[0].canonical_index == 1
+
+    def test_a_same_source_collision_leaves_the_whole_bucket_unmerged(self) -> None:
+        """Two same-source postings plus a third, different-source listing that
+        shares the fingerprint: which (if either) of the two same-source postings the
+        third one actually matches is unknowable, so none of the three are merged."""
+        rows = [
+            _Row("Acme", "Backend Engineer"),
+            _Row("Acme", "Backend Engineer"),
+            _Row("Acme", "Backend Engineer"),
+        ]
+        groups = group_duplicates(
+            rows,
+            locations=["Remote", "Remote", "Remote"],
+            sources=["greenhouse", "greenhouse", "career_page"],
+            source_keys=["gh-board-acme", "gh-board-acme", "acme-careers"],
+        )
+        assert len(groups) == 3
+        assert all(not g.is_duplicate for g in groups)
+
+    def test_source_keys_mismatched_length_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="same length"):
+            group_duplicates([_Row("Acme", "Engineer")], source_keys=[])
+
 
 class TestMaterialChange:
     def test_a_changed_title_is_material(self) -> None:

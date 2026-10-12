@@ -8,17 +8,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path
 
 from app.api.deps import AppSettings, CurrentUserId, DbSession
-from app.core.errors import NotImplementedPhaseError
 from app.models import Job, JobMatchAssessment
 from app.schemas.common import Page
 from app.schemas.job import (
     DiscoverRequest,
+    DiscoverResponseOut,
+    DiscoverSourceResultOut,
     JobDetailOut,
     JobFeedItemOut,
     JobListQuery,
     JobSummaryOut,
     MatchAssessmentOut,
 )
+from app.services import discovery as discovery_service
 from app.services import jobs as jobs_service
 from app.services import matching as matching_service
 from app.services.jobs import JobFilters
@@ -161,12 +163,45 @@ async def analyze_job(
     return _assessment_out(row)
 
 
-@router.post("/discover", status_code=202)
-async def discover_jobs(payload: DiscoverRequest, user_id: CurrentUserId) -> dict[str, object]:
-    """Trigger a connector run.
+@router.post("/discover", response_model=DiscoverResponseOut)
+async def discover_jobs(
+    payload: DiscoverRequest,
+    session: DbSession,
+    user_id: CurrentUserId,
+    settings: AppSettings,
+) -> DiscoverResponseOut:
+    """Run Greenhouse discovery for the given board tokens.
 
-    Not implemented in Phase 1: there are no live connectors yet, so this returns 501
-    rather than pretending to have searched anything. Greenhouse, Lever, Ashby and
-    configurable career pages arrive in Phase 2.
+    Runs synchronously: there is no background worker yet (Phase 4), so this
+    request does the fetching itself and only returns once every requested board
+    has been attempted. A board that fails (timeout, bad token, malformed
+    response) is reported in its own result entry with the reason; it does not
+    fail the whole request or touch postings already stored from a previous run.
+
+    An empty ``sources`` list re-runs every already-configured, enabled Greenhouse
+    source rather than doing nothing.
+
+    Lever, Ashby, and configurable career pages are not implemented yet — see
+    ``docs/PLAN.md`` Phase 2.
     """
-    raise NotImplementedPhaseError("Live job discovery", phase=2)
+    result = await discovery_service.run_discovery(
+        session, user_id=user_id, settings=settings, board_tokens=payload.sources
+    )
+    return DiscoverResponseOut(
+        agent_run_id=result.agent_run_id,
+        sources=[
+            DiscoverSourceResultOut(
+                kind=s.kind,
+                source=s.external_key,
+                status=s.status,
+                jobs_seen=s.jobs_seen,
+                jobs_created=s.jobs_created,
+                jobs_updated=s.jobs_updated,
+                jobs_closed=s.jobs_closed,
+                error=s.error,
+                duration_ms=s.duration_ms,
+                retry_count=s.retry_count,
+            )
+            for s in result.sources
+        ],
+    )
