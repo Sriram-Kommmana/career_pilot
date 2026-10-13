@@ -514,22 +514,66 @@ section for each one and its regression test.
 
 Only Greenhouse ships; Lever/Ashby are not built. Combobox/checkbox widgets,
 CAPTCHA, MFA, and login walls are reported as needing the human, never
-bypassed. The actual final-click submission action remains **disabled** —
-`applications.submit()` still refuses with `SUBMISSION_NOT_IMPLEMENTED` even
-once the gate allows it, exactly as it did before this phase; that one
-capability is Phase 6's job, not reimplemented here. See `docs/BROWSER.md` for
-the full supported/unsupported matrix and a manual walkthrough performed
-against a live GitLab posting.
+bypassed. The actual final-click submission action was deliberately left
+**disabled** in this phase — `applications.submit()` refused with
+`SUBMISSION_NOT_IMPLEMENTED` even once the gate allowed it — and shipped as
+Phase 6 instead (below). See `docs/BROWSER.md` for the full
+supported/unsupported matrix and a manual walkthrough performed against a
+live GitLab posting.
 
 ### Phase 6 — submission
 
-The review screen, approval binding/invalidation, and the gate now run
-end-to-end as of Phase 5 (fed real browser verification for the first time).
-What remains: the actual browser click of the employer's submit control,
-idempotency under a real outward-facing action, uncertain-result
-reconciliation (`SUBMITTED_UNCERTAIN`), and the audit log surface for a real
-submission. `applications.submit()` still deliberately stops at
-`SUBMISSION_NOT_IMPLEMENTED` once the gate passes, pending this phase.
+Replaces the `SUBMISSION_NOT_IMPLEMENTED` stub with a real click, through
+`app.services.browser_submit`, reached only once the gate, a fresh re-read of
+the live page, and a separate, explicit "Approve and submit application"
+action all agree — see `docs/BROWSER.md`'s "Submitting an application"
+section for the full check sequence. Nothing about the gate, the state
+machine, or the approval/form-hash mechanism changed; this phase is the first
+real caller of all three.
+
+Three things needed genuine new design, not reuse, because a browser click
+cannot be rolled back the way a database write can:
+
+- **The point of no return is a separate, durably-committed transaction**,
+  deliberately apart from the request's own session (`app.db.session`'s
+  existing `session_scope()`, previously used only by workers/scripts) —
+  claimed *before* the click, so a crash between the click and recording its
+  outcome leaves a legible, stuck `SUBMITTING` row rather than a silently
+  rolled-back nothing.
+- **Approval is bound to the browser session that reviewed the page**, not
+  just to a database hash — a session that has never been (re-)inspected
+  refuses with `BROWSER_SESSION_NOT_INSPECTED`, and every previously-verified
+  field is re-read from the live page immediately before the click, with any
+  drift invalidating the stale approval for real (committed) even though the
+  submission call itself refuses.
+- **The outcome classifier defaults to uncertain.** `CONFIRMED_SUCCESS` and
+  `CONFIRMED_FAILURE` both require positive evidence (a recognised page
+  signal, no exception, no navigation ambiguity); anything else — including
+  any exception from the click itself — is `SUBMITTED_UNCERTAIN`, never
+  silently retried, reconciled only by a passive re-check or the user's own
+  word.
+
+One real functional gap surfaced during implementation and was fixed:
+`app.browser.mapping`'s file-kind guard (Phase 5's Security Defect #2 fix)
+correctly never auto-fills a file input, but also never recorded *which*
+confirmed field a recognised file id (`resume`/`cover_letter`) corresponded
+to — meaning `browser_fill.fill`'s second pass could never write back
+`verification=PASSED` even when a human attached a matching file themselves,
+and a required resume could never be verified by any real browser session,
+ever. Fixed by carrying the correspondence forward as `source_kind`/
+`source_id` on the file mapping (never a `proposed_value`, never
+`supported_for_fill` — nothing about auto-fill changed); see
+`tests/integration/test_browser_submission.py`'s fixtures, which attach a
+file exactly as a human would before asserting the resulting field is
+verified.
+
+`tests/integration/test_browser_submission.py` (16 tests) covers the full
+matrix: a successful submission with exactly one real click, confirmed
+failure, an uncertain outcome with no auto-retry, every refusal path listed
+above plus a stale-hash/missing-field/unresolved-legal-question refusal,
+concurrent and duplicate submission requests, a simulated crash after the
+click, and reconciliation without resubmitting — every test asserts the
+number of real clicks, not just the HTTP status.
 
 ### Phase 7 — intelligence, deployment, polish
 
@@ -542,7 +586,7 @@ pass; performance; docs.
 
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| R1 | **A submission happens without genuine human consent** | Low | Catastrophic — a real application sent to a real employer | Gate is a pure function with 9 conditions, unit-tested; no LLM-reachable submit path; approval bound to form hash; browser layer has no submit capability until ph.6; a standing test asserts fill never submits |
+| R1 | **A submission happens without genuine human consent** | Low | Catastrophic — a real application sent to a real employer | Gate is a pure function with 9 conditions, unit-tested; no LLM-reachable submit path; approval bound to form hash *and* (ph.6) to the browser session that reviewed the page, re-verified against the live page immediately before the click; a standing test asserts fill never submits, and a separate suite asserts the submit path itself never fires without every check passing |
 | R2 | Fabricated candidate facts reach an employer | Medium | Severe — misrepresentation | Every answer requires provenance (NOT NULL); unknown means `NEEDS_HUMAN`; generated prose labelled; no inference of personal details; review screen shows source per field |
 | R3 | ATS markup changes break adapters silently | High | Medium | Deterministic adapters that fail closed; read-back verification; adapter health metrics; never assume an action worked |
 | R4 | Scraping violates terms, robots, or rate limits | Medium | High — legal and access loss | Prefer documented public ATS endpoints; per-source rate limits and backoff; honour robots where applicable; no access-control evasion; no anti-bot bypass; sources declared per connector |
@@ -552,7 +596,7 @@ pass; performance; docs.
 | R8 | Seeded demo jobs mistaken for live postings | Medium | High — trust | `is_demo_data` flag in the DB, in the API response, and as a visible badge; README states Phase 1 ships no live jobs |
 | R9 | CAPTCHA or MFA tempts a bypass "fix" | Medium | Severe | Explicitly out of scope; intervention states instead; documented in `docs/SAFETY.md` |
 | R10 | Browser flakiness produces false "filled" claims | High | Medium | Verification reads live DOM; `VERIFICATION_FAILED` is a first-class state; screenshots are supporting, not primary, evidence |
-| R11 | Ambiguous submit result causes a double application | Low | High | Unique idempotency key; `SUBMITTED_UNCERTAIN` plus manual reconciliation; never blind-retry |
+| R11 | Ambiguous submit result causes a double application | Low | High | Unique idempotency key; attempt claimed durably before the click; `SUBMITTED_UNCERTAIN` plus reconciliation that never clicks again; every attempt (success, failure, or uncertain) is one-shot — never blind-retried |
 | R12 | Reference-repo code contaminates this codebase | Low | Severe — licence breach | No clone, no vendor, no copy; independent implementation; `docs/ATTRIBUTION.md` |
 | R13 | Dependency churn (TS 7, Vite 8, SQLAlchemy 2.1) breaks the build | Medium | Low | Versions pinned and peer-checked; TS held at 5.9.3 for typescript-eslint; rationale recorded above |
 | R14 | Docker daemon unavailable blocks all testing | Medium | Low | Domain tests are pure and infra-free; DB tests skip with an actionable message |

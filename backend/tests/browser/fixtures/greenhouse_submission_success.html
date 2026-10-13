@@ -1,0 +1,32 @@
+<!doctype html>
+<!--
+  A regression/behaviour fixture for Phase 6's outcome classifier. Clicking the
+  submit control triggers a client-side DOM swap — never a real form POST;
+  page.set_content() pages have no server to receive one — that shows a
+  recognised confirmation marker, simulating the kind of same-page "thank you"
+  confirmation some Greenhouse postings show after a successful submission.
+  Used by tests/browser/test_greenhouse_adapter.py and
+  tests/integration/test_browser_submission.py to prove CONFIRMED_SUCCESS
+  classification without ever touching a real employer site.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; document.getElementById('application_form').style.display='none'; document.getElementById('confirmation').style.display='block'; return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" value="Ada" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" value="Lovelace" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" value="ada@example.com" required>
+
+    <button type="submit">Submit application</button>
+  </form>
+  <div id="confirmation" style="display:none;">
+    Thank you for applying! We've received your application.
+  </div>
+</body>
+</html>

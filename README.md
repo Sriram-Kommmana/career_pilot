@@ -176,20 +176,22 @@ career_pilot/
   labelled as a ranking heuristic, never as a probability.
 - The application state machine and the submission gate, both enforced
   server-side and fully exercised through the UI.
-- 304 backend tests (unit + integration) and 23 frontend tests, all passing.
+- 612 backend tests (unit + integration + browser) and 27 frontend tests, all passing.
 
 ### Not yet built
 
 - **Live job connectors** (Greenhouse, Lever, Ashby, career pages) — Phase 2.
-- **The browser agent's final submission click** — Phase 6. Phase 5 shipped
-  real browser inspection, controlled filling, and read-back verification for
-  Greenhouse application pages (see [`docs/BROWSER.md`](docs/BROWSER.md)), so
-  an application can now genuinely reach `WAITING_FOR_APPROVAL`, but
-  `applications.submit()` still deliberately refuses with
-  `SUBMISSION_NOT_IMPLEMENTED` even once the gate allows it — no code path
-  clicks an employer's submit control yet. A "record that you applied
-  yourself" path remains the honest interim option, explicitly marked as
-  unverified.
+- **Verified-accurate submission confirmation.** Phase 6 shipped the real
+  submission click for Greenhouse application pages (see
+  [`docs/BROWSER.md`](docs/BROWSER.md)) — approval bound to the exact
+  browser-verified form state, a live re-check immediately before clicking,
+  and an honest three-way outcome (confirmed success, confirmed failure, or
+  uncertain, never auto-retried). What it does *not* claim: the post-click
+  success/failure text detector is explicitly best-effort and has never been
+  checked against a real employer submission, so an uncertain outcome always
+  falls back to your own confirmation via "reconcile submission". A "record
+  that you applied yourself" path remains available for anything outside
+  Greenhouse, explicitly marked as unverified.
 - **Email/Telegram notifications** — Phase 4B+. Scheduled discovery and in-app,
   threshold-based notifications shipped in Phase 4A as a `python -m app.cli sweep`
   command run on a timer (Task Scheduler/cron — see

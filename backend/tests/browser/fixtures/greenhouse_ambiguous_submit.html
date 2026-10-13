@@ -1,0 +1,20 @@
+<!doctype html>
+<!--
+  A regression fixture for find_submit_control's ambiguity guard: two
+  type="submit" controls inside the same form. Neither should ever be
+  clicked on a guess -- find_submit_control must return None.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" value="Ada" required>
+    <label for="email">Email*</label>
+    <input type="email" id="email" value="ada@example.com" required>
+
+    <button type="submit">Submit application</button>
+    <button type="submit">Submit and save a copy</button>
+  </form>
+</body>
+</html>

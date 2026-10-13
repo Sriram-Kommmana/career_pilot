@@ -24,6 +24,9 @@ import {
   Lock,
   ShieldAlert,
   ExternalLink,
+  Send,
+  XCircle,
+  AlertTriangle,
 } from "lucide-react";
 import type {
   ApplicationAnswerOut,
@@ -32,6 +35,7 @@ import type {
   ApplicationOutcome,
   ApplicationPackageOut,
   ApplicationReviewOut,
+  BrowserSessionOut,
 } from "@/types/api";
 
 const OUTCOMES: ApplicationOutcome[] = [
@@ -54,6 +58,8 @@ export function ApplicationDetail() {
   const [manualNote, setManualNote] = useState("");
   const [manualConfirmed, setManualConfirmed] = useState(false);
   const [pkg, setPkg] = useState<ApplicationPackageOut | undefined>(undefined);
+  const [confirmingSubmit, setConfirmingSubmit] = useState(false);
+  const [reconcileNote, setReconcileNote] = useState("");
 
   const detailQuery = useQuery({
     queryKey: ["application", applicationId],
@@ -64,6 +70,23 @@ export function ApplicationDetail() {
   const reviewQuery = useQuery({
     queryKey: ["application", applicationId, "review"],
     queryFn: () => api.get<ApplicationReviewOut>(`/applications/${applicationId}/review`),
+    enabled: !!applicationId && !!detailQuery.data,
+  });
+
+  // The final submission click requires a real, open, already-inspected
+  // browser session (see app.services.browser_submit) — checked here too so
+  // the button can be disabled with a clear reason instead of only failing
+  // after the click.
+  const browserSessionQuery = useQuery({
+    queryKey: ["application", applicationId, "browser-session"],
+    queryFn: async (): Promise<BrowserSessionOut | null> => {
+      try {
+        return await api.get<BrowserSessionOut>(`/applications/${applicationId}/browser-session`);
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "BROWSER_SESSION_NOT_FOUND") return null;
+        throw e;
+      }
+    },
     enabled: !!applicationId && !!detailQuery.data,
   });
 
@@ -135,8 +158,25 @@ export function ApplicationDetail() {
         form_state_hash: formStateHash,
       }),
     onSuccess: () => {
+      setConfirmingSubmit(false);
       invalidate();
       queryClient.invalidateQueries({ queryKey: ["application", applicationId, "review"] });
+      queryClient.invalidateQueries({
+        queryKey: ["application", applicationId, "browser-session"],
+      });
+    },
+    onError: (e) => setActionError(describeError(e)),
+  });
+
+  const reconcileMutation = useMutation({
+    mutationFn: (outcome: "SUBMITTED" | "FAILED") =>
+      api.post<ApplicationDetailOut>(`/applications/${applicationId}/reconcile-submission`, {
+        outcome,
+        note: reconcileNote || undefined,
+      }),
+    onSuccess: () => {
+      setReconcileNote("");
+      invalidate();
     },
     onError: (e) => setActionError(describeError(e)),
   });
@@ -186,9 +226,23 @@ export function ApplicationDetail() {
     application.state,
   );
   const canApprove = application.state === "WAITING_FOR_APPROVAL" && !!application.form_state_hash;
-  const canSubmit = decision?.allowed === true && !!application.form_state_hash;
+  const hasOpenBrowserSession = !!browserSessionQuery.data;
+  const canSubmit =
+    decision?.allowed === true &&
+    !!application.form_state_hash &&
+    application.state === "WAITING_FOR_APPROVAL" &&
+    hasOpenBrowserSession &&
+    !submitMutation.isPending;
   const isTerminal = ["SUBMITTED", "CANCELLED"].includes(application.state);
   const alreadySubmitted = !!application.submitted_at;
+  // "careerpilot_browser" = a real submit click CareerPilot itself performed
+  // and classified; "user_reported" = recorded via reconciliation, the
+  // user's own word, only ever corroborated (never replaced) by a passive
+  // check of a still-open browser page. These are deliberately kept
+  // distinct in the UI rather than shown as equally-verified.
+  const submissionSource = application.submission_evidence?.source as string | undefined;
+  const submissionVerifiedByCareerPilot = !!application.submission_evidence
+    ?.verified_by_careerpilot;
 
   return (
     <div className="space-y-6">
@@ -357,6 +411,65 @@ export function ApplicationDetail() {
               <CardTitle>Submission gate</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              {application.state === "SUBMITTED" && (
+                <Alert variant="success" title="Submitted">
+                  {submissionSource === "careerpilot_browser"
+                    ? "The employer's page confirmed this application was received."
+                    : submissionVerifiedByCareerPilot
+                      ? "You confirmed this was received, corroborated by a passive check of the still-open browser page."
+                      : "You confirmed this was received — CareerPilot could not independently verify it."}
+                </Alert>
+              )}
+              {application.state === "FAILED" && application.failure_reason && (
+                <Alert variant="danger" title="Not submitted">
+                  {application.failure_reason}
+                  {submissionSource === "user_reported" && (
+                    <span className="mt-1 block text-xs opacity-80">
+                      Based on your own report — CareerPilot could not independently verify this.
+                    </span>
+                  )}
+                </Alert>
+              )}
+              {application.state === "SUBMITTED_UNCERTAIN" && (
+                <div className="space-y-3">
+                  <Alert variant="warning" title="Outcome uncertain">
+                    We could not confirm whether the employer received this
+                    application. Check the employer's site or your email, then
+                    record what you found below. This never submits anything
+                    again.
+                  </Alert>
+                  <Textarea
+                    placeholder="What did you find when you checked? (optional)"
+                    value={reconcileNote}
+                    onChange={(e) => setReconcileNote(e.target.value)}
+                    rows={2}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      isLoading={
+                        reconcileMutation.isPending &&
+                        reconcileMutation.variables === "SUBMITTED"
+                      }
+                      onClick={() => reconcileMutation.mutate("SUBMITTED")}
+                    >
+                      <CheckCircle2 className="h-4 w-4" /> It was received
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      isLoading={
+                        reconcileMutation.isPending && reconcileMutation.variables === "FAILED"
+                      }
+                      onClick={() => reconcileMutation.mutate("FAILED")}
+                    >
+                      <XCircle className="h-4 w-4" /> It was not received
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {reviewQuery.isLoading ? (
                 <Skeleton className="h-24 w-full" />
               ) : decision ? (
@@ -381,6 +494,15 @@ export function ApplicationDetail() {
                 )
               ) : null}
 
+              {decision?.allowed && !hasOpenBrowserSession && !isTerminal && (
+                <Alert variant="warning">
+                  No browser session is currently open for this application.
+                  Open one and inspect the page above before submitting — a
+                  submission always happens through a real, freshly-checked
+                  browser session, never from database state alone.
+                </Alert>
+              )}
+
               <div className="flex flex-col gap-2 pt-2">
                 <Button
                   variant="outline"
@@ -393,15 +515,43 @@ export function ApplicationDetail() {
                 >
                   <Lock className="h-4 w-4" /> Approve current form
                 </Button>
-                <Button
-                  disabled={!canSubmit}
-                  isLoading={submitMutation.isPending}
-                  onClick={() =>
-                    application.form_state_hash && submitMutation.mutate(application.form_state_hash)
-                  }
-                >
-                  Submit application
-                </Button>
+
+                {!confirmingSubmit ? (
+                  <Button
+                    disabled={!canSubmit}
+                    onClick={() => setConfirmingSubmit(true)}
+                  >
+                    <Send className="h-4 w-4" /> Submit application
+                  </Button>
+                ) : (
+                  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <p className="flex items-start gap-2 text-sm text-amber-900">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                      This will click Submit on {application.job.company.name}'s
+                      real application page for "{application.job.title}". This
+                      cannot be undone.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        disabled={!canSubmit}
+                        isLoading={submitMutation.isPending}
+                        onClick={() =>
+                          application.form_state_hash &&
+                          submitMutation.mutate(application.form_state_hash)
+                        }
+                      >
+                        Approve and submit application
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        disabled={submitMutation.isPending}
+                        onClick={() => setConfirmingSubmit(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
             <CardFooter className="flex-col items-start gap-1 text-xs text-slate-400">
@@ -415,7 +565,10 @@ export function ApplicationDetail() {
             </CardFooter>
           </Card>
 
-          {!isTerminal && !alreadySubmitted && (
+          {!isTerminal &&
+            !alreadySubmitted &&
+            application.state !== "SUBMITTED_UNCERTAIN" &&
+            application.state !== "SUBMITTING" && (
             <Card>
               <CardHeader>
                 <CardTitle>Applied yourself?</CardTitle>

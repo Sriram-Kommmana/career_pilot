@@ -147,6 +147,13 @@ class Settings(BaseSettings):
     browser_session_ttl_seconds: Annotated[int, Field(ge=60, le=7200)] = 600
     # An approval is only valid against a sufficiently fresh verification.
     max_verification_age_seconds: Annotated[int, Field(ge=30, le=86_400)] = 900
+    # --- browser submission (Phase 6) -------------------------------------
+    #: How long, after clicking the employer's submit control, to watch the live
+    #: page for a recognised confirmation or rejection signal before giving up and
+    #: recording the outcome as uncertain. Short on purpose: an unrecognised page
+    #: past this window is reported honestly as uncertain, never assumed to be a
+    #: success.
+    browser_submission_confirmation_timeout_ms: Annotated[int, Field(ge=500, le=60_000)] = 8_000
 
     # --- connectors (Phase 2) ---------------------------------------------
     connector_user_agent: str = "CareerPilot/0.1"

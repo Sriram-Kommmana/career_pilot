@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  Adversarial regression fixture: a failure-style phrase ("this field is
+  required") is present on the page from the start (static hint text,
+  unrelated to this attempt), but clicking submit hides the form and shows a
+  genuinely new, distinct success confirmation. Proves the classifier
+  discriminates old content from new content correctly in both directions --
+  the stale failure phrase must not block a real, newly-appeared success
+  signal from being recognised.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; document.getElementById('application_form').style.display='none'; document.getElementById('confirmation').style.display='block'; return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" value="Ada" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" value="Lovelace" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" value="ada@example.com" required>
+
+    <label for="referral">How did you hear about us?</label>
+    <input type="text" id="referral">
+    <p class="hint">This field is required for some roles; leave blank if not applicable.</p>
+
+    <button type="submit">Submit application</button>
+  </form>
+  <div id="confirmation" style="display:none;">
+    Thank you for applying! We've received your application.
+  </div>
+</body>
+</html>

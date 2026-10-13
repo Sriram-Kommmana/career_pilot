@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Identical to greenhouse_submission_ready_success.html except that clicking
+  submit shows nothing recognisable at all, simulating an outcome this
+  adapter cannot confirm either way.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" required>
+
+    <label for="resume">Attach</label>
+    <input type="file" id="resume">
+
+    <label for="question_2001">Are you legally authorised to work in this country?*</label>
+    <input type="text" id="question_2001" required>
+
+    <label for="question_2002">Will you now or in the future require visa sponsorship?*</label>
+    <input type="text" id="question_2002" required>
+
+    <button type="submit">Submit application</button>
+  </form>
+  <p>We're processing your request.</p>
+</body>
+</html>

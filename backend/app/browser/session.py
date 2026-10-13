@@ -58,6 +58,15 @@ class BrowserSession:
     last_mapping: tuple[ProposedMapping, ...] = field(default_factory=tuple)
     mapping_token: str | None = None
     last_fill_outcomes: tuple[FieldFillOutcome, ...] = field(default_factory=tuple)
+    #: The page's own text/URL captured immediately before the submit click —
+    #: never before that, so it reflects the form exactly as approved. Kept
+    #: so a later reconciliation of an uncertain outcome, on this same still-
+    #: open session, can tell a confirmation that is genuinely new since the
+    #: attempt apart from text that was already sitting on the page (and
+    #: would otherwise look like corroborating evidence merely because it
+    #: happens to still be there).
+    submission_baseline_text: str | None = None
+    submission_baseline_url: str | None = None
 
 
 class BrowserSessionManager:

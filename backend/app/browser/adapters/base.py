@@ -59,12 +59,30 @@ class FieldReadBack:
     matches_intended: bool
 
 
+#: What happened when the deterministic submit control was clicked. Never
+#: ``CONFIRMED_SUCCESS`` merely because the click itself did not raise — that is
+#: not evidence, it is the absence of an immediate error. Only a positively
+#: recognised confirmation or rejection signal earns a confirmed verdict; anything
+#: else, including any exception during or after the click, is ``UNCERTAIN``.
+SubmitOutcome = Literal["CONFIRMED_SUCCESS", "CONFIRMED_FAILURE", "UNCERTAIN"]
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitAttempt:
+    outcome: SubmitOutcome
+    #: A short, non-sensitive description of what was observed (which marker
+    #: matched, or that nothing recognisable appeared within the timeout, or
+    #: that the page disconnected). Never raw page text and never a field value.
+    evidence: str
+
+
 class FormAdapter(Protocol):
     """What every employer-form adapter must implement.
 
     Deliberately small: detect-or-refuse, inspect, fill one field, read one
-    field back. Nothing here decides *what* to fill — that is mapping's job —
-    and nothing here ever finds or clicks a submit control.
+    field back, find the one deterministic submit control, and submit. Nothing
+    here decides *what* to fill — that is mapping's job — and nothing here ever
+    clicks anything based on generic text alone.
     """
 
     name: str
@@ -76,3 +94,21 @@ class FormAdapter(Protocol):
     async def fill_field(self, page: object, field: ExtractedField, value: str) -> None: ...
 
     async def read_field(self, page: object, field: ExtractedField) -> FieldReadBack: ...
+
+    async def find_submit_control(self, page: object) -> object | None:
+        """The one control that submits this form, or ``None``.
+
+        ``None`` whenever there is any ambiguity at all: zero or more than one
+        candidate, not visible, not enabled, or an accessible name that does not
+        clearly say "submit". Never a best guess — the caller must refuse and
+        ask the human to finish by hand rather than click something uncertain."""
+        ...
+
+    async def submit(
+        self, page: object, control: object, *, confirmation_timeout_ms: int
+    ) -> SubmitAttempt:
+        """Click the already-located, already-validated submit control and
+        classify what happened. Called only once, only after every other check
+        has passed, and only by the deterministic code path the submission gate
+        has already approved — never by a model."""
+        ...

@@ -1,0 +1,43 @@
+<!doctype html>
+<!--
+  Adversarial regression fixture: every baseline-required field has a real
+  matching page field (like greenhouse_submission_ready_ambiguous.html), but
+  a success-marker phrase is already present on the page from the start
+  (unrelated testimonial copy). Clicking submit changes nothing. Used to
+  prove that a later reconciliation call, even on the same still-open
+  session, does not mistake this stale, pre-attempt content for new
+  evidence.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <aside>
+    "Thank you for your interest in Fixture Co -- we love hearing from
+    candidates." -- a testimonial blurb present on the page from the start,
+    unrelated to any particular application.
+  </aside>
+
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" required>
+
+    <label for="resume">Attach</label>
+    <input type="file" id="resume">
+
+    <label for="question_2001">Are you legally authorised to work in this country?*</label>
+    <input type="text" id="question_2001" required>
+
+    <label for="question_2002">Will you now or in the future require visa sponsorship?*</label>
+    <input type="text" id="question_2002" required>
+
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>

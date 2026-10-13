@@ -159,6 +159,30 @@ class MappingStaleError(ConflictError):
     code = "MAPPING_STALE"
 
 
+class SessionNotInspectedError(ConflictError):
+    """The browser session is open but has never been (re-)inspected.
+
+    A submission's pre-click revalidation re-reads the live page against the
+    session's own last inspection/mapping. A session that was just opened (or
+    reopened after the previous one expired) has none yet, so there is nothing
+    to revalidate against — the approval is bound to a session that actually
+    reviewed this exact page, and this one has not.
+    """
+
+    code = "BROWSER_SESSION_NOT_INSPECTED"
+
+
+class SubmitControlNotFoundError(ConflictError):
+    """No single, visible, enabled, unambiguously-named submit control was found.
+
+    Covers a missing control, more than one candidate, a disabled/hidden one, or
+    one whose accessible name does not clearly say "submit" — any of which means
+    stop and ask the human to finish submitting by hand, never click a guess.
+    """
+
+    code = "SUBMIT_CONTROL_NOT_FOUND"
+
+
 class PayloadTooLargeError(AppError):
     status_code = 413
     code = "PAYLOAD_TOO_LARGE"

@@ -195,6 +195,21 @@ class ManualSubmissionRequest(ApiRequest):
     note: Annotated[str | None, Field(max_length=1000)] = None
 
 
+class ReconcileSubmissionRequest(ApiRequest):
+    """Resolve a ``SUBMITTED_UNCERTAIN`` application without submitting anything.
+
+    ``outcome`` must be ``SUBMITTED`` or ``FAILED`` — the only two states a human
+    reconciling an uncertain attempt can actually attest to. If a browser session
+    for this application happens to still be open, the service passively re-checks
+    the live page for the same confirmation/rejection signals the original attempt
+    looked for (never clicking anything); otherwise this is the user's own word,
+    recorded the same way ``ManualSubmissionRequest`` is.
+    """
+
+    outcome: ApplicationState
+    note: Annotated[str | None, Field(max_length=1000)] = None
+
+
 class TrackerBoardOut(ApiModel):
     columns: dict[str, list[ApplicationSummaryOut]]
     column_order: list[str]

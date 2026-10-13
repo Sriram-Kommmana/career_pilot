@@ -83,20 +83,25 @@ class TestSubmitRequestShape:
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "APPROVAL_STALE"
 
-    async def test_submit_with_no_approval_lists_every_outstanding_blocker(
+    async def test_submit_with_no_approval_and_no_browser_session_is_refused(
         self, client: object, api: str, auth: dict[str, str], seeded_job: object
     ) -> None:
+        """Phase 6: a real submission requires a real, open, inspected browser
+        session before the gate is even consulted (see the explicit check order
+        in ``app.services.browser_submit.submit``) — so with none open, this
+        refuses on that alone, before ``NO_APPROVAL``/``NO_VERIFICATION``/
+        ``WRONG_STATE`` would otherwise apply. The gate's own blocker-listing
+        behaviour is unchanged and still covered directly by
+        ``tests/unit/test_submission_gate.py``.
+        """
         application = await _create_and_prepare(client, api, auth, seeded_job.id)  # type: ignore[attr-defined]
         response = await client.post(  # type: ignore[attr-defined]
             f"{api}/applications/{application['id']}/submit",
             headers=auth,
             json={"confirm": True, "form_state_hash": application["form_state_hash"]},
         )
-        assert response.status_code == 409
-        codes = {b["code"] for b in response.json()["error"]["details"]["blockers"]}
-        assert "NO_APPROVAL" in codes
-        assert "NO_VERIFICATION" in codes
-        assert "WRONG_STATE" in codes
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "BROWSER_SESSION_NOT_FOUND"
 
 
 class TestFullGatePass:
@@ -122,15 +127,20 @@ class TestFullGatePass:
         assert [b["code"] for b in decision["blockers"]] == ["NO_APPROVAL"]
         assert review.json()["application"]["form_state_hash"] == new_hash
 
-    async def test_approve_then_submit_hits_not_implemented_and_rolls_back_cleanly(
+    async def test_approve_then_submit_without_a_browser_session_rolls_back_cleanly(
         self, client: object, session: object, api: str, auth: dict[str, str], seeded_job: object
     ) -> None:
         """The load-bearing test of this module.
 
-        Every gate condition is satisfied. The only thing stopping a real submission
-        is that Phase 5/6 do not exist yet — and the request that discovers that must
-        leave the application exactly as it was, not half-transitioned into
-        ``SUBMITTING`` with an idempotency key burned for nothing.
+        Every *database-side* gate condition is satisfied — approved, verified,
+        the right state. The real submission click (Phase 6, exercised with a
+        real browser in ``tests/integration/test_browser_submission.py``) still
+        requires an actual open, inspected browser session, which this test
+        deliberately does not create (``advance_to_waiting_for_approval`` is a
+        DB-only test stand-in, not a real browser fill). The request that
+        discovers that must leave the application exactly as it was, not
+        half-transitioned into ``SUBMITTING`` with an idempotency key burned
+        for nothing.
         """
         application = await _create_and_prepare(client, api, auth, seeded_job.id)  # type: ignore[attr-defined]
         user_id = await _user_id(client, api, auth)
@@ -160,10 +170,11 @@ class TestFullGatePass:
             headers=auth,
             json={"confirm": True, "form_state_hash": new_hash},
         )
-        assert submit.status_code == 409
-        assert submit.json()["error"]["code"] == "SUBMISSION_NOT_IMPLEMENTED"
+        assert submit.status_code == 404
+        assert submit.json()["error"]["code"] == "BROWSER_SESSION_NOT_FOUND"
 
-        # Nothing was left half-done: the failed transaction rolled back completely.
+        # Nothing was left half-done: the attempt never reached the point of no
+        # return, so nothing needed to roll back in the first place.
         after = await client.get(  # type: ignore[attr-defined]
             f"{api}/applications/{application['id']}", headers=auth
         )
@@ -175,7 +186,8 @@ class TestFullGatePass:
     async def test_a_second_attempt_fails_the_same_way_not_worse(
         self, client: object, session: object, api: str, auth: dict[str, str], seeded_job: object
     ) -> None:
-        """Because the first attempt rolled back, a retry is not 'already submitted'."""
+        """Because the first attempt never reached the point of no return, a
+        retry is not 'already submitted'."""
         application = await _create_and_prepare(client, api, auth, seeded_job.id)  # type: ignore[attr-defined]
         user_id = await _user_id(client, api, auth)
         new_hash = await advance_to_waiting_for_approval(
@@ -200,8 +212,8 @@ class TestFullGatePass:
             headers=auth,
             json={"confirm": True, "form_state_hash": new_hash},
         )
-        assert first.json()["error"]["code"] == "SUBMISSION_NOT_IMPLEMENTED"
-        assert second.json()["error"]["code"] == "SUBMISSION_NOT_IMPLEMENTED"
+        assert first.json()["error"]["code"] == "BROWSER_SESSION_NOT_FOUND"
+        assert second.json()["error"]["code"] == "BROWSER_SESSION_NOT_FOUND"
 
 
 class TestApprovalInvalidation:

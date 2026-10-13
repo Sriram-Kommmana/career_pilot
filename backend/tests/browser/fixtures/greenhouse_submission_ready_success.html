@@ -1,0 +1,42 @@
+<!doctype html>
+<!--
+  A fixture whose every baseline-required field (name, email, resume, work
+  authorisation, visa sponsorship) has a real, matchable, fillable field on
+  the page -- unlike greenhouse_standard.html, which deliberately has no
+  field for the last three (see test_browser_fill_verification.py's module
+  docstring). Used by tests/integration/test_browser_submission.py to drive
+  an application genuinely into WAITING_FOR_APPROVAL through the real
+  inspect -> fill -> verify pipeline, then submit it. Clicking the submit
+  control shows a recognised confirmation marker -- never a real network
+  request; page.set_content() pages have no server to receive one.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; document.getElementById('application_form').style.display='none'; document.getElementById('confirmation').style.display='block'; return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" required>
+
+    <label for="resume">Attach</label>
+    <input type="file" id="resume">
+
+    <label for="question_2001">Are you legally authorised to work in this country?*</label>
+    <input type="text" id="question_2001" required>
+
+    <label for="question_2002">Will you now or in the future require visa sponsorship?*</label>
+    <input type="text" id="question_2002" required>
+
+    <button type="submit">Submit application</button>
+  </form>
+  <div id="confirmation" style="display:none;">
+    Thank you for applying! We've received your application.
+  </div>
+</body>
+</html>

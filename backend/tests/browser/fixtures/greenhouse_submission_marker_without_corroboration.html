@@ -1,0 +1,28 @@
+<!doctype html>
+<!--
+  Adversarial regression fixture: clicking submit injects a brand-new
+  success-marker phrase into the page (e.g. an unrelated banner or script
+  that happened to fire), but the form itself is left fully visible and
+  unchanged, and the URL never changes. A new text match alone is not
+  enough -- the correct result is UNCERTAIN, since nothing about the page's
+  own structure corroborates that a real confirmation happened.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; document.getElementById('unrelated_banner').textContent='Thank you for applying to our newsletter!'; return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" value="Ada" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" value="Lovelace" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" value="ada@example.com" required>
+
+    <button type="submit">Submit application</button>
+  </form>
+  <div id="unrelated_banner"></div>
+</body>
+</html>

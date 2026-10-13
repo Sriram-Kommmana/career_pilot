@@ -38,6 +38,7 @@ from app.schemas.application import (
     ManualSubmissionRequest,
     OutcomeRequest,
     ReadinessChecklistItemOut,
+    ReconcileSubmissionRequest,
     ResumeGuidanceItemOut,
     SubmissionDecisionOut,
     SubmitRequest,
@@ -57,6 +58,7 @@ from app.schemas.job import MatchAssessmentOut
 from app.services import application_package as package_service
 from app.services import applications as app_service
 from app.services import browser_fill as browser_fill_service
+from app.services import browser_submit as browser_submit_service
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -532,17 +534,27 @@ async def submit_application(
     user_id: CurrentUserId,
     settings: AppSettings,
 ) -> ApplicationDetailOut:
-    """Submit an approved, verified application.
+    """Submit an approved, verified application through its real browser session.
 
-    Three layers must all agree:
+    Several layers must all agree, re-checked against the *live* page, not just
+    the database, immediately before anything is clicked:
 
     1. ``confirm`` must be ``true`` and the ``form_state_hash`` must match — so a bare
        or replayed POST cannot submit anything.
-    2. The submission gate re-runs server-side and must return no blockers.
-    3. The idempotency key is claimed in the same transaction, so a double click
-       cannot become two submissions.
+    2. A browser session for this application must be open, owned by this user,
+       still on a supported origin and the expected application page, and must
+       actually have been inspected on this session — an approval is bound to a
+       session that reviewed the page, not merely one that happens to be open.
+    3. Every field this session filled and verified is re-read from the live page
+       right now; any drift invalidates the stale approval and refuses.
+    4. The submission gate re-runs server-side and must return no blockers.
+    5. The idempotency key is claimed, durably, before the click — a double click
+       or a retried request cannot become two submissions.
 
-    A refusal returns 409 with the full blocker list in ``details.blockers``.
+    A refusal returns 409 (with the full blocker list in ``details.blockers`` when
+    it is the gate that refused). Once past the point of no return, the outcome —
+    confirmed success, confirmed failure, or uncertain — is always recorded; this
+    endpoint never leaves an application silently stuck mid-submission.
     """
     if not payload.confirm:
         raise ValidationError(
@@ -564,14 +576,45 @@ async def submit_application(
             },
         )
 
-    await app_service.submit(
-        session,
+    await browser_submit_service.submit(
+        user_id=user_id, application_id=application_id, settings=settings
+    )
+    # browser_submit commits through its own, separate sessions (deliberately —
+    # see that module's docstring on why the claim and the outcome each need
+    # their own durable transaction). This request's session already has the
+    # application cached from the hash check above and, with
+    # expire_on_commit=False, would otherwise keep returning that stale,
+    # pre-submission copy instead of re-reading what was actually committed.
+    session.expire_all()
+    application = await app_service.get_application(
+        session, user_id=user_id, application_id=application_id
+    )
+    return _detail(application)
+
+
+@router.post("/{application_id}/reconcile-submission", response_model=ApplicationDetailOut)
+async def reconcile_submission(
+    application_id: ApplicationId,
+    payload: ReconcileSubmissionRequest,
+    session: DbSession,
+    user_id: CurrentUserId,
+) -> ApplicationDetailOut:
+    """Resolve a ``SUBMITTED_UNCERTAIN`` application. Never submits anything.
+
+    Only legal from ``SUBMITTED_UNCERTAIN``. If a browser session for this
+    application still happens to be open, a passive, read-only check of the live
+    page (no click, no fill) corroborates the outcome; otherwise this records the
+    user's own word, exactly as ``record-manual-submission`` already does for an
+    application submitted outside CareerPilot entirely.
+    """
+    await browser_submit_service.reconcile(
         user_id=user_id,
         application_id=application_id,
-        settings=settings,
-        # A request that reached this handler carries an interactive bearer token.
-        human_initiated=True,
+        outcome=payload.outcome,
+        note=payload.note,
     )
+    # Same reasoning as /submit: reconcile() commits through its own session.
+    session.expire_all()
     application = await app_service.get_application(
         session, user_id=user_id, application_id=application_id
     )

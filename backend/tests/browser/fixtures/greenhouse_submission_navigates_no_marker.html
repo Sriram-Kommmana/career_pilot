@@ -1,0 +1,26 @@
+<!doctype html>
+<!--
+  Adversarial regression fixture: clicking submit changes the page's URL
+  (simulating a real navigation) but shows no recognisable confirmation or
+  rejection text at all. Navigation alone is not evidence of success -- the
+  correct result is UNCERTAIN, never CONFIRMED_SUCCESS just because
+  "something happened".
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; history.pushState({}, '', '#thanks'); return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" value="Ada" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" value="Lovelace" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" value="ada@example.com" required>
+
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>

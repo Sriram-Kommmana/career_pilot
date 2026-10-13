@@ -246,6 +246,20 @@ def build_proposed_mappings(
             # exists for *text* answers. Matched against a file input, it
             # would offer a text draft as something to "fill" a file upload
             # with -- never attempted, not even flagged ready-to-fill.
+            #
+            # A file field's *stable* id (Greenhouse's "resume"/"cover_letter")
+            # matches a baseline ApplicationField's own key one-for-one. Carrying
+            # that correspondence forward as source_kind/source_id -- never a
+            # proposed_value, never supported_for_fill -- is what lets the fill
+            # service's own second pass correctly record that row as verified
+            # when a human attaches a matching file in the visible browser
+            # themselves (see app.services.browser_fill._apply_outcomes_to_fields).
+            # Without it, a required resume upload could never be verified by any
+            # real browser session, ever, because nothing here ever claims to
+            # have filled it.
+            file_source = next(
+                (s for s in confirmed_fields if s.field_key == extracted.field_id), None
+            )
             results.append(
                 ProposedMapping(
                     field_id=extracted.field_id,
@@ -253,9 +267,9 @@ def build_proposed_mappings(
                     field_kind=extracted.field_kind,
                     required=extracted.required,
                     proposed_value=None,
-                    source_kind=None,
-                    source_id=None,
-                    source_provenance=None,
+                    source_kind="application_field" if file_source is not None else None,
+                    source_id=file_source.field_key if file_source is not None else None,
+                    source_provenance=file_source.provenance if file_source is not None else None,
                     confidence="low",
                     rule_id=None,
                     needs_review=True,

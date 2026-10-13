@@ -23,10 +23,16 @@ There is no code path from a model's output to a submission. Concretely:
 - **Confirmed as built (2026-10-13):** Phase 5 shipped real Playwright-driven
   inspection and controlled filling for Greenhouse application pages,
   verified both against sanitized local fixtures and manually against a live
-  GitLab posting (see `docs/BROWSER.md`). `applications.submit()` still
-  deliberately refuses with `SUBMISSION_NOT_IMPLEMENTED` even once the gate
-  allows it — the browser layer this section describes has no path to that
-  click yet, by design, pending Phase 6.
+  GitLab posting (see `docs/BROWSER.md`).
+- **Confirmed as built (2026-10-13, Phase 6):** the actual submit click now
+  exists, in `app.services.browser_submit`, reached only after the gate, a
+  live re-read of the page, and an explicit, separate "Approve and submit
+  application" action all agree. It is still not an agent capability: no
+  tool, prompt, or model output can reach it, and
+  `backend/tests/integration/test_browser_submission.py` is the standing
+  integration-level guard — every refusal path, the one-click-per-attempt
+  guarantee, and the never-auto-retry rule for an uncertain outcome are
+  asserted there against a real (sanitized, local) Playwright session.
 
 ## 2. The submission gate is a backend decision
 
@@ -88,6 +94,31 @@ attempt, not a warning. Screenshots are supporting evidence only.
 A submission is reported as `SUBMITTED` only when the resulting page state supports it.
 An ambiguous result becomes `SUBMITTED_UNCERTAIN` and requires human reconciliation.
 A potentially successful submission is never retried automatically.
+
+**Confirmed as built (2026-10-13, Phase 6):** `app.browser.adapters.greenhouse`'s
+outcome classifier only ever reports `CONFIRMED_SUCCESS` on a confirmation
+signal that is both genuinely new since a snapshot taken immediately before
+the click (never a phrase that was already sitting on the page — see the
+adversarial finding below) and structurally corroborated (navigation or the
+form disappearing); `CONFIRMED_FAILURE` likewise requires a new rejection
+signal with the URL unchanged and the form still present. Any exception
+during or after the click, including one from Playwright's own click
+implementation, is `UNCERTAIN`, never `CONFIRMED_FAILURE`, because an
+exception alone cannot rule out that the click's real-world effect already
+fired. Reconciling an uncertain outcome (`POST /reconcile-submission`) never
+clicks anything again, by construction — it applies the same
+new-since-baseline standard where a baseline is available, falls back to
+requiring the form to be gone otherwise, and the final `SUBMITTED`/`FAILED`
+outcome is always the user's own explicit choice, never inferred from that
+check.
+
+**Adversarial pre-commit review finding (2026-10-13, fixed):** the first
+version of this classifier compared the page's text against nothing —
+a success or rejection phrase already present on the page *before* the
+click (unrelated marketing copy, a static validation hint, leftover text
+from an earlier attempt) would have been misread as evidence of the current
+attempt. See `docs/BROWSER.md`'s "Phase 6" security review findings section
+for the fix and its regression tests.
 
 ## 8. Secrets never reach prompts, logs, or ordinary rows
 

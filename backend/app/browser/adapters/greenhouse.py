@@ -21,6 +21,7 @@ Only one real adapter ships in this phase. Lever/Ashby are not built.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Final
 
@@ -29,7 +30,11 @@ from app.browser.adapters.base import (
     FieldKind,
     FieldReadBack,
     FormInspectionResult,
+    SubmitAttempt,
 )
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 #: Greenhouse's own standard fields. Safe to recognise by id because these are
 #: stable across postings — confirmed against a real page, not assumed.
@@ -44,6 +49,57 @@ _STABLE_FILE_IDS: Final[frozenset[str]] = frozenset({"resume", "cover_letter"})
 _REQUIRED_FOR_DETECTION: Final[frozenset[str]] = frozenset({"first_name", "email"})
 
 _TRAILING_REQUIRED_MARK_RE: Final = re.compile(r"\*\s*$")
+
+#: The accessible name of the one real control that submits a Greenhouse
+#: application, confirmed against a live, public posting during Phase 5
+#: planning (see docs/PLAN.md's "Live-verified, not assumed" note): literally
+#: "Submit application". Matched case-insensitively and loosely (substring),
+#: but a control whose name does not contain "submit" at all is never treated
+#: as the submit control, no matter where it sits in the DOM.
+_SUBMIT_CONTROL_NAME_HINT: Final = "submit"
+
+#: Best-effort, explicitly unverified-against-a-live-submission signals. Phase 5's
+#: manual walkthrough deliberately never submitted a real application (see
+#: docs/BROWSER.md), so none of this has been confirmed against Greenhouse's real
+#: post-submit behaviour. Kept short and conservative on purpose: a real page that
+#: matches none of these is reported as UNCERTAIN, never guessed into a result.
+#:
+#: Public (no leading underscore): ``app.services.browser_submit``'s passive
+#: reconciliation check reuses these exact lists rather than keeping its own
+#: copy, so there is one definition of what counts as a recognised signal.
+SUCCESS_TEXT_MARKERS: Final[tuple[str, ...]] = (
+    "thank you for applying",
+    "thank you for your interest",
+    "application has been submitted",
+    "received your application",
+    "successfully submitted",
+)
+FAILURE_TEXT_MARKERS: Final[tuple[str, ...]] = (
+    "this field is required",
+    "can't be blank",
+    "cannot be blank",
+    "please fill out this field",
+    "there was a problem with your submission",
+)
+#: How often to re-check the page while waiting for a recognisable signal.
+_CONFIRMATION_POLL_INTERVAL_SECONDS: Final = 0.25
+
+
+def _first_new_marker(text: str, markers: tuple[str, ...], baseline: str) -> str | None:
+    """The first marker present in ``text`` that was *not already present*
+    in ``baseline``.
+
+    This is the whole point of capturing a baseline before ever clicking:
+    a marker that was already sitting somewhere on the page — unrelated
+    marketing copy saying "thank you for your interest in joining us", a
+    static "* this field is required" disclaimer near an untouched optional
+    field, leftover text from a previous attempt — proves nothing about
+    *this* click. Only a marker that appears for the first time after the
+    click is even a candidate; see ``find_submit_control``'s caller for the
+    further corroboration (navigation or the form disappearing) required
+    before it is trusted as evidence rather than just a candidate.
+    """
+    return next((m for m in markers if m in text and m not in baseline), None)
 
 
 def _clean_label(raw: str | None) -> str | None:
@@ -174,6 +230,194 @@ class GreenhouseAdapter:
 
         value = await locator.input_value()
         return FieldReadBack(field_id=field.field_id, value=value, matches_intended=True)
+
+    async def find_submit_control(self, page: object) -> object | None:
+        """The one control that submits the application, or ``None``.
+
+        Deliberately strict: must be a ``type="submit"`` control **inside the
+        same form ``inspect()`` scanned** (never anywhere else on the page —
+        a decoy "Submit" button outside the form, or a newsletter sign-up
+        elsewhere, is never a candidate), there must be exactly one, it must
+        be visible and enabled right now, and its accessible name must contain
+        "submit". Any ambiguity at all returns ``None`` rather than guessing.
+        """
+        from playwright.async_api import Page
+
+        assert isinstance(page, Page)
+        if await page.locator("form").count() == 0:
+            return None
+        form = page.locator("form").first
+        candidates = form.locator('button[type="submit"], input[type="submit"]')
+        count = await candidates.count()
+        if count != 1:
+            return None
+
+        candidate = candidates.first
+        tag_name = await candidate.evaluate("el => el.tagName.toLowerCase()")
+        name = (
+            await candidate.inner_text()
+            if tag_name == "button"
+            else (await candidate.get_attribute("value")) or ""
+        )
+        if _SUBMIT_CONTROL_NAME_HINT not in (name or "").strip().lower():
+            return None
+        if not await candidate.is_visible() or not await candidate.is_enabled():
+            return None
+        return candidate
+
+    async def submit(
+        self, page: object, control: object, *, confirmation_timeout_ms: int
+    ) -> SubmitAttempt:
+        """Click the already-located, already-validated submit control once,
+        then watch the live page for a recognised signal.
+
+        A baseline of the page's own text and URL is captured *before* the
+        click — a marker already sitting on the page proves nothing about
+        this attempt, so only a marker that is genuinely new counts as a
+        candidate at all (see ``_first_new_marker``). A new marker alone is
+        still not enough: ``CONFIRMED_SUCCESS`` additionally requires the
+        page to have navigated or the form itself to have disappeared
+        (what a real confirmation actually looks like structurally), and
+        ``CONFIRMED_FAILURE`` additionally requires the *opposite* — the
+        same URL and the form still sitting right there, i.e. the form's own
+        validation visibly blocked the attempt without anything being sent.
+        Neither corroboration met, with or without a text match, falls
+        through to ``UNCERTAIN``.
+
+        Any exception during the click itself, or anything that happens
+        afterwards (including a navigation race in Playwright's own click
+        implementation), is reported as ``UNCERTAIN`` rather than
+        ``CONFIRMED_FAILURE`` — we cannot safely rule out that the click's
+        real-world effect fired even though the call raised.
+        """
+        from playwright.async_api import Page
+
+        assert isinstance(page, Page)
+
+        baseline_text, baseline_url = await self._snapshot(page)
+
+        try:
+            await control.click()  # type: ignore[attr-defined]
+        except Exception as exc:
+            logger.debug("browser_submit_click_raised", error_type=type(exc).__name__)
+            return SubmitAttempt(
+                outcome="UNCERTAIN",
+                evidence=(
+                    "The submit click did not complete cleanly, so whether the "
+                    "employer received this application could not be confirmed."
+                ),
+            )
+
+        try:
+            return await self._observe_after_click(
+                page,
+                confirmation_timeout_ms,
+                baseline_text=baseline_text,
+                baseline_url=baseline_url,
+            )
+        except Exception as exc:
+            logger.debug("browser_submit_observation_failed", error_type=type(exc).__name__)
+            return SubmitAttempt(
+                outcome="UNCERTAIN",
+                evidence=(
+                    "The page could not be read after submitting, so the outcome "
+                    "could not be confirmed."
+                ),
+            )
+
+    async def _snapshot(self, page: object) -> tuple[str, str]:
+        """The page's current lower-cased body text and URL. Used both as the
+        pre-click baseline and, read-only, by reconciliation — never changes
+        anything on the page."""
+        from playwright.async_api import Page
+
+        assert isinstance(page, Page)
+        try:
+            text = (await page.inner_text("body")).lower()
+        except Exception:
+            text = ""
+        return text, page.url
+
+    async def _form_is_present(self, page: object) -> bool:
+        """Whether the application form is still visibly on the page.
+
+        A real Greenhouse confirmation typically replaces or hides the form
+        it just accepted; a form still sitting there, unchanged, is itself
+        evidence *against* a successful submission, and its continued
+        presence (alongside an unchanged URL) is exactly what makes a
+        rejection marker trustworthy rather than coincidental. If this
+        cannot be determined (the page is in a bad state), the conservative
+        reading is "still present" — the direction that blocks a false
+        ``CONFIRMED_SUCCESS`` rather than permits one.
+        """
+        from playwright.async_api import Page
+
+        assert isinstance(page, Page)
+        try:
+            if await page.locator("form").count() == 0:
+                return False
+            return await page.locator("form").first.is_visible()
+        except Exception:
+            return True
+
+    async def _observe_after_click(
+        self,
+        page: object,
+        confirmation_timeout_ms: int,
+        *,
+        baseline_text: str,
+        baseline_url: str,
+    ) -> SubmitAttempt:
+        from playwright.async_api import Page
+
+        assert isinstance(page, Page)
+        deadline = asyncio.get_running_loop().time() + confirmation_timeout_ms / 1000
+        while True:
+            if page.is_closed():
+                return SubmitAttempt(
+                    outcome="UNCERTAIN",
+                    evidence="The browser closed before the outcome could be confirmed.",
+                )
+            try:
+                text = (await page.inner_text("body")).lower()
+            except Exception:
+                text = ""
+
+            success = _first_new_marker(text, SUCCESS_TEXT_MARKERS, baseline_text)
+            if success is not None:
+                navigated = page.url != baseline_url
+                form_gone = not await self._form_is_present(page)
+                if navigated or form_gone:
+                    return SubmitAttempt(
+                        outcome="CONFIRMED_SUCCESS",
+                        evidence=f"The page showed a new confirmation signal: {success!r}.",
+                    )
+                # A matching phrase appeared, but nothing about the page's own
+                # structure corroborates it (same URL, form still right
+                # there) — not trusted on text alone. Keep watching.
+
+            failure = _first_new_marker(text, FAILURE_TEXT_MARKERS, baseline_text)
+            if (
+                failure is not None
+                and page.url == baseline_url
+                and await self._form_is_present(page)
+            ):
+                return SubmitAttempt(
+                    outcome="CONFIRMED_FAILURE",
+                    evidence=f"The page showed a new rejection signal: {failure!r}.",
+                )
+
+            if asyncio.get_running_loop().time() >= deadline:
+                return SubmitAttempt(
+                    outcome="UNCERTAIN",
+                    evidence=(
+                        "No recognised confirmation or rejection appeared on the "
+                        "page within the timeout. This does not mean the "
+                        "application was not received — verify on the "
+                        "employer's site."
+                    ),
+                )
+            await asyncio.sleep(_CONFIRMATION_POLL_INTERVAL_SECONDS)
 
     async def _collect_ids(self, page: object) -> frozenset[str]:
         from playwright.async_api import Page

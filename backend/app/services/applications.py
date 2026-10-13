@@ -142,14 +142,23 @@ BASELINE_FIELDS: Final[tuple[FieldPlan, ...]] = (
 
 
 async def get_application(
-    session: AsyncSession, *, user_id: uuid.UUID, application_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    application_id: uuid.UUID,
+    with_for_update: bool = False,
 ) -> Application:
     """Load an application the caller owns.
 
     A row belonging to someone else raises :class:`NotFoundError`, not a 403: the API
     does not confirm that another user's application id exists.
+
+    ``with_for_update`` locks the row for the rest of the transaction. Used only by
+    the submission claim step, where two concurrent requests for the same
+    application must not both pass the "not already submitting" check before either
+    commits — everywhere else the default (no lock) is correct.
     """
-    result = await session.execute(
+    stmt = (
         select(Application)
         .where(Application.id == application_id, Application.user_id == user_id)
         .options(
@@ -163,6 +172,9 @@ async def get_application(
             selectinload(Application.approvals),
         )
     )
+    if with_for_update:
+        stmt = stmt.with_for_update()
+    result = await session.execute(stmt)
     application = result.scalar_one_or_none()
     if application is None:
         raise NotFoundError("Application not found.")
@@ -818,10 +830,16 @@ async def evaluate_submission(
     application_id: uuid.UUID,
     settings: Settings | None = None,
     human_initiated: bool = True,
+    with_for_update: bool = False,
 ) -> tuple[Application, SubmissionDecision]:
     """Run the gate without submitting. Drives the review screen."""
     cfg = settings or get_settings()
-    application = await get_application(session, user_id=user_id, application_id=application_id)
+    application = await get_application(
+        session,
+        user_id=user_id,
+        application_id=application_id,
+        with_for_update=with_for_update,
+    )
     resume = (
         await _require_resume(session, user_id=user_id, resume_id=application.resume_id)
         if application.resume_id
@@ -900,7 +918,7 @@ async def approve(
     return application
 
 
-async def submit(
+async def claim_submission_attempt(
     session: AsyncSession,
     *,
     user_id: uuid.UUID,
@@ -908,16 +926,22 @@ async def submit(
     settings: Settings | None = None,
     human_initiated: bool = True,
 ) -> Application:
-    """Submit an application, if and only if the gate permits it.
+    """Re-run the gate and, if it allows submission, claim the attempt.
 
-    The gate is re-evaluated here, inside the transaction that claims the idempotency
-    key, so a form that changed between the review screen and the button press is
-    caught. A refusal raises :class:`~app.core.errors.SubmissionBlockedError` carrying
-    every blocker.
+    This is the DB-side point of no return: the idempotency key is claimed and the
+    application moves to ``SUBMITTING`` in the same transaction the gate was
+    re-evaluated in, so a form that changed between the review screen and this call
+    is caught. A refusal raises :class:`~app.core.errors.SubmissionBlockedError`
+    carrying every blocker, and nothing is written.
 
-    Phase 1 has no browser, so this always refuses with ``NO_VERIFICATION``. The
-    actual submission step arrives with Phase 5 and 6; nothing here pretends to have
-    sent anything.
+    Callers that go on to perform a real, non-rollback-able submission action (the
+    browser click — see ``app.services.browser_submit``) must commit this function's
+    result in its own transaction *before* attempting that action, never alongside
+    it: if the process dies between the click and recording its outcome, this
+    claimed, committed ``SUBMITTING`` row is the durable evidence that an attempt may
+    have reached the employer. ``app.services.applications.submit`` — the pre-Phase-6
+    entry point that only ever reaches ``evaluate_submission`` and refuses — no
+    longer exists under that name; every caller goes through the browser-aware path.
     """
     from app.core.errors import SubmissionBlockedError
 
@@ -928,6 +952,7 @@ async def submit(
         application_id=application_id,
         settings=cfg,
         human_initiated=human_initiated,
+        with_for_update=True,
     )
 
     if not decision.allowed:
@@ -955,15 +980,150 @@ async def submit(
         message="Submitting the approved application.",
         actor_user_id=user_id,
     )
+    return application
 
-    # The browser step belongs to Phase 5/6. Until it exists, this function must not
-    # claim an application was sent, so it stops here and says so plainly.
-    raise ConflictError(
-        "The approval checks passed, but the browser submission step is not "
-        "implemented yet (Phase 5 and 6). Nothing was sent.",
-        code="SUBMISSION_NOT_IMPLEMENTED",
-        details={"phase": 6},
-    )
+
+async def record_submission_outcome(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    application_id: uuid.UUID,
+    outcome: str,
+    evidence: str,
+) -> Application:
+    """Record what actually happened to a claimed submission attempt.
+
+    ``outcome`` is one of ``"CONFIRMED_SUCCESS"``, ``"CONFIRMED_FAILURE"``, or
+    ``"UNCERTAIN"`` — see ``app.browser.adapters.base.SubmitOutcome``. Every branch
+    is terminal for this attempt: a potentially successful submission, and an
+    uncertain one, are never retried automatically, and a confirmed failure still
+    consumed the one claimed attempt (recovering requires re-preparing, which is the
+    existing, deliberately conservative ``FAILED -> PREPARING`` path).
+    """
+    application = await get_application(session, user_id=user_id, application_id=application_id)
+    now = utcnow()
+    payload: dict[str, object] = {"evidence": evidence}
+
+    if outcome == "CONFIRMED_SUCCESS":
+        application.submitted_at = now
+        application.submission_evidence = {
+            "source": "careerpilot_browser",
+            "outcome": outcome,
+            "evidence": evidence,
+            "verified_by_careerpilot": True,
+        }
+        await transition(
+            session,
+            application=application,
+            to_state=ApplicationState.SUBMITTED,
+            event_type="submitted",
+            message="The employer's page confirmed this application was received.",
+            actor_user_id=user_id,
+            payload=payload,
+        )
+    elif outcome == "CONFIRMED_FAILURE":
+        application.failure_reason = evidence
+        application.submission_evidence = {
+            "source": "careerpilot_browser",
+            "outcome": outcome,
+            "evidence": evidence,
+            "verified_by_careerpilot": True,
+        }
+        await transition(
+            session,
+            application=application,
+            to_state=ApplicationState.FAILED,
+            event_type="submission_failed",
+            message="The employer's page did not accept this submission.",
+            actor_user_id=user_id,
+            payload=payload,
+        )
+    else:
+        application.submission_evidence = {
+            "source": "careerpilot_browser",
+            "outcome": "UNCERTAIN",
+            "evidence": evidence,
+            "verified_by_careerpilot": True,
+        }
+        await transition(
+            session,
+            application=application,
+            to_state=ApplicationState.SUBMITTED_UNCERTAIN,
+            event_type="submission_uncertain",
+            message=(
+                "We could not confirm whether this application was received. "
+                "Check the employer's site, then reconcile it."
+            ),
+            actor_user_id=user_id,
+            payload=payload,
+        )
+    return application
+
+
+async def reconcile_submission(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    application_id: uuid.UUID,
+    outcome: ApplicationState,
+    note: str | None,
+    checked_live_page: bool,
+) -> Application:
+    """Resolve a ``SUBMITTED_UNCERTAIN`` application without submitting anything.
+
+    Only legal from ``SUBMITTED_UNCERTAIN``, and only to ``SUBMITTED`` or ``FAILED``
+    — both already legal single-step moves in the state machine. This function
+    itself never touches a browser and never calls the submission gate; it only
+    records what the user (optionally corroborated by a passive, read-only check of
+    a still-open browser session — see ``app.services.browser_submit``) says
+    happened.
+    """
+    if outcome not in (ApplicationState.SUBMITTED, ApplicationState.FAILED):
+        raise ValidationError(
+            "A reconciled outcome must be SUBMITTED or FAILED.",
+            details={"outcome": outcome.value},
+        )
+    application = await get_application(session, user_id=user_id, application_id=application_id)
+    if application.state is not ApplicationState.SUBMITTED_UNCERTAIN:
+        raise ConflictError(
+            f"An application in {application.state.value} cannot be reconciled; "
+            "it must be SUBMITTED_UNCERTAIN.",
+            code="INVALID_STATE_TRANSITION",
+            details={"current_state": application.state.value},
+        )
+
+    now = utcnow()
+    evidence: dict[str, object] = {
+        "source": "user_reported",
+        "note": note,
+        "checked_live_page": checked_live_page,
+        "verified_by_careerpilot": checked_live_page,
+    }
+    if outcome is ApplicationState.SUBMITTED:
+        application.submitted_at = now
+        application.submission_evidence = evidence
+        await transition(
+            session,
+            application=application,
+            to_state=ApplicationState.SUBMITTED,
+            event_type="submission_reconciled",
+            message="You confirmed this application was received.",
+            actor_user_id=user_id,
+            payload={"checked_live_page": checked_live_page},
+        )
+    else:
+        application.failure_reason = note
+        application.submission_evidence = evidence
+        await transition(
+            session,
+            application=application,
+            to_state=ApplicationState.FAILED,
+            event_type="submission_reconciled",
+            message="You confirmed this application was not received.",
+            actor_user_id=user_id,
+            payload={"checked_live_page": checked_live_page},
+        )
+    return application
 
 
 async def cancel(

@@ -1,0 +1,33 @@
+<!doctype html>
+<!--
+  Adversarial regression fixture: a success-marker phrase is already present
+  on the page BEFORE the submit click (unrelated marketing/testimonial copy
+  elsewhere on the page, exactly the kind of thing a real careers page
+  carries). Clicking submit changes nothing. The classifier must not treat
+  the pre-existing phrase as evidence of this attempt -- the correct result
+  is UNCERTAIN, not CONFIRMED_SUCCESS.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <aside>
+    "Thank you for your interest in Fixture Co -- we love hearing from
+    candidates." -- a testimonial blurb present on the page from the start,
+    unrelated to any particular application.
+  </aside>
+
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get"
+        onsubmit="window.__submitAttempts = (window.__submitAttempts || 0) + 1; return false;">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" value="Ada" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" value="Lovelace" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" value="ada@example.com" required>
+
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>
