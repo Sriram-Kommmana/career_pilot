@@ -463,18 +463,73 @@ service layer has a single seam where a future provider could plug in, matching
 multi-process or multi-worker need is demonstrated, not built speculatively.
 Email and Telegram remain unimplemented modular adapters.
 
-### Phase 5 — browser agent
+### Phase 5 — browser agent (shipped 2026-10-13)
 
-Playwright/Chromium session management; a11y-tree and DOM inspection; deterministic
-Greenhouse/Lever/Ashby adapters; field mapping from provenanced facts; fill then
-**read-back verify**; resume upload; artefact capture with redaction; intervention
-signals for login, CAPTCHA, MFA; unknown layouts fail safe. Mock-form test suite,
-including a test asserting nothing is ever submitted during fill.
+Investigation found the same pattern as 4A/4B, one level deeper: Phase 1 had
+already built the *entire* safety skeleton this phase needed — the
+`FILLING → VERIFYING → WAITING_FOR_APPROVAL → SUBMITTING` transitions in
+`app.domain.states`, the nine-check `app.domain.submission_gate.evaluate()`,
+`ApplicationField.selector`/`action_result`/`verification`/`verification_note`,
+`InterventionReason.NEEDS_LOGIN`/`NEEDS_CAPTCHA`/`NEEDS_MFA`, and
+`Settings.browser_headless`/`browser_timeout_ms`/`artifact_dir` — all unused
+until now. Phase 5's job was to be the first real producer of genuine browser
+verification for machinery that had been waiting for it since Phase 1, so it
+shipped with **no migration, no new model, and no second approval or gate**:
 
-### Phase 6 — review and submission
+- `app.browser.policy` (pure): an explicit employer-origin allowlist
+  (`job-boards.greenhouse.io`, `boards.greenhouse.io`); rejects non-http(s)
+  schemes and local/private-network hosts unconditionally, independent of the
+  allowlist.
+- `app.browser.adapters.greenhouse.GreenhouseAdapter`: field extraction
+  grounded in a real, live-observed GitLab Greenhouse application page (not
+  assumed) — stable ids for standard fields, label-text matching for
+  per-posting custom questions, combobox/checkbox widgets reported as
+  unsupported rather than guessed at.
+- `app.browser.mapping` (pure): deterministic `ExtractedField → ProposedMapping`
+  rules; a field with no rule match, an ambiguous match, or a sensitive/legal
+  classification always gets `needs_review=True` and no proposed value.
+- `app.browser.session`: an in-memory-only session manager (same pattern as
+  `app.services.events.ActivityBroker`) — a process restart invalidates every
+  session by construction, with no cleanup job needed.
+- `app.services.browser_fill`: orchestrates inspect/fill, introduces
+  **Approval A** (a `mapping_token` hash binding a fill request to the exact
+  reviewed mapping — deliberately *not* `ApprovalRecordRow`), then reuses
+  `applications.transition()`/`_recompute_form_state()` unchanged to drive the
+  **existing, untouched** gate (Approval B) with real verification data for
+  the first time.
+- Never submits: no `.submit()`/form-submit call anywhere in the fill path,
+  proven by a standing test that instruments `HTMLFormElement.prototype.submit`
+  and asserts it stays at zero through every supported field.
 
-Full review screen; approval binding and invalidation; the gate end-to-end;
-idempotency; uncertain-result reconciliation; audit log surface.
+One real bug found and fixed via the fill+verify integration test: `fill()`
+was computing the real verification result and *then* calling
+`_recompute_form_state()`, whose own "any form-state-hash change invalidates
+the prior verification" rule immediately overwrote it back to
+`NOT_ATTEMPTED` — reordered so the hash settles first. A follow-up security
+review found and fixed three more concrete defects (a missing origin
+re-check in `inspect()`, a file-kind field that could be proposed a text
+value, and a fill-failure exception that could leak a confirmed value into
+`verification_note`) — see `docs/BROWSER.md`'s "Security review findings"
+section for each one and its regression test.
+
+Only Greenhouse ships; Lever/Ashby are not built. Combobox/checkbox widgets,
+CAPTCHA, MFA, and login walls are reported as needing the human, never
+bypassed. The actual final-click submission action remains **disabled** —
+`applications.submit()` still refuses with `SUBMISSION_NOT_IMPLEMENTED` even
+once the gate allows it, exactly as it did before this phase; that one
+capability is Phase 6's job, not reimplemented here. See `docs/BROWSER.md` for
+the full supported/unsupported matrix and a manual walkthrough performed
+against a live GitLab posting.
+
+### Phase 6 — submission
+
+The review screen, approval binding/invalidation, and the gate now run
+end-to-end as of Phase 5 (fed real browser verification for the first time).
+What remains: the actual browser click of the employer's submit control,
+idempotency under a real outward-facing action, uncertain-result
+reconciliation (`SUBMITTED_UNCERTAIN`), and the audit log surface for a real
+submission. `applications.submit()` still deliberately stops at
+`SUBMISSION_NOT_IMPLEMENTED` once the gate passes, pending this phase.
 
 ### Phase 7 — intelligence, deployment, polish
 

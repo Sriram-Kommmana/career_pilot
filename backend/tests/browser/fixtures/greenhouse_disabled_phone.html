@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  A regression fixture for one specific failure mode: ``phone`` exists and is
+  recognised (same stable id as the standard fixture) but is disabled, so a
+  fill attempt times out mid-retry rather than succeeding or failing
+  immediately. Playwright's own retry/call-log embeds the literal attempted
+  value in that exception's message — this fixture exists to prove that text
+  never reaches ``ApplicationField.verification_note`` or the API response.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" required>
+
+    <label for="phone">Phone</label>
+    <input type="tel" id="phone" disabled>
+
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>

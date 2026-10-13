@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  Sanitized, hand-built fixture modelled on a real, public Greenhouse
+  application page's structure (verified live during Phase 5 planning — see
+  the plan's "Live-verified, not assumed" note). No real company or candidate
+  content; only the shape — stable standard-field ids, a per-posting numeric
+  custom-question id, a required legal question with no possible authoritative
+  source, a combobox widget, a duplicate-label case, and file inputs.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Fixture Role at Fixture Co</title></head>
+<body>
+  <form id="application_form" action="https://job-boards.greenhouse.io/fixtureco/jobs/1/application" method="get">
+    <label for="first_name">First Name*</label>
+    <input type="text" id="first_name" required>
+
+    <label for="last_name">Last Name*</label>
+    <input type="text" id="last_name" required>
+
+    <label for="email">Email*</label>
+    <input type="email" id="email" required>
+
+    <label for="country">Country</label>
+    <input type="text" id="country" role="combobox" aria-expanded="false">
+
+    <label for="phone">Phone</label>
+    <input type="tel" id="phone">
+
+    <label for="resume">Attach</label>
+    <input type="file" id="resume">
+
+    <label for="cover_letter">Attach</label>
+    <input type="file" id="cover_letter">
+
+    <label for="question_1001">LinkedIn Profile</label>
+    <input type="text" id="question_1001">
+
+    <label for="question_1002">Why are you interested in this role?</label>
+    <textarea id="question_1002"></textarea>
+
+    <label for="question_1003">Are you subject to any employment agreements and/or post-employment restrictive covenants?*</label>
+    <input type="text" id="question_1003" required>
+
+    <!-- Duplicate-label case: two distinct questions sharing display text. -->
+    <label for="question_1004">Website</label>
+    <input type="text" id="question_1004">
+    <label for="question_1005">Website</label>
+    <input type="text" id="question_1005">
+
+    <fieldset>
+      <legend>Gender</legend>
+      <input type="radio" id="gender_male" name="gender" value="Male">
+      <label for="gender_male">Male</label>
+      <input type="radio" id="gender_female" name="gender" value="Female">
+      <label for="gender_female">Female</label>
+    </fieldset>
+
+    <input type="hidden" id="job_id" value="1">
+
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>

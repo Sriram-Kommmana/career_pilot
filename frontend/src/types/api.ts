@@ -513,6 +513,71 @@ export interface ApplicationPackageOut {
   application: ApplicationDetailOut;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5: browser-assisted application automation
+// ---------------------------------------------------------------------------
+
+export interface ExtractedFieldOut {
+  field_id: string;
+  label: string | null;
+  field_kind: string;
+  required: boolean;
+  unrecognised: boolean;
+}
+
+export type MappingConfidence = "high" | "medium" | "low";
+
+export interface ProposedMappingOut {
+  field_id: string;
+  label: string | null;
+  field_kind: string;
+  required: boolean;
+  proposed_value: string | null;
+  source_kind: string | null;
+  source_id: string | null;
+  source_provenance: string | null;
+  confidence: MappingConfidence;
+  rule_id: string | null;
+  needs_review: boolean;
+  supported_for_fill: boolean;
+  sensitive_category: string | null;
+  reason: string;
+}
+
+export interface BrowserSessionOut {
+  session_id: string;
+  origin: string;
+}
+
+export interface InspectionResultOut {
+  session_id: string;
+  origin: string;
+  supported: boolean;
+  reason: string | null;
+  fields: ExtractedFieldOut[];
+  mappings: ProposedMappingOut[];
+  // Required back on the fill request — proves the fields reviewed here are
+  // the exact ones about to be filled, not an earlier or different proposal.
+  mapping_token: string | null;
+}
+
+export interface FieldFillOutcomeOut {
+  field_id: string;
+  action_result: string;
+  verification: VerificationStatus;
+  verification_note: string | null;
+}
+
+export interface FillValidationReportOut {
+  session_id: string;
+  outcomes: FieldFillOutcomeOut[];
+  filled_count: number;
+  failed_count: number;
+  still_needs_human: string[];
+  application_state: ApplicationState;
+  verification_status: VerificationStatus;
+}
+
 export interface TrackerBoardOut {
   columns: Record<string, ApplicationSummaryOut[]>;
   column_order: string[];

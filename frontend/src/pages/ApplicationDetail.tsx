@@ -14,6 +14,7 @@ import { ErrorState } from "@/components/ErrorState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { DemoDataBadge } from "@/components/DemoDataBadge";
 import { ApplicationPackagePanel, DraftBadge } from "@/components/ApplicationPackagePanel";
+import { BrowserAssistPanel } from "@/components/BrowserAssistPanel";
 import { formatDateTime, formatStateLabel } from "@/lib/format";
 import {
   ArrowLeft,
@@ -301,6 +302,19 @@ export function ApplicationDetail() {
             </Card>
           )}
 
+          {application.fields.length > 0 && !isTerminal && (
+            <BrowserAssistPanel
+              applicationId={application.id}
+              applicationState={application.state}
+              onFilled={() => {
+                invalidate();
+                queryClient.invalidateQueries({
+                  queryKey: ["application", applicationId, "review"],
+                });
+              }}
+            />
+          )}
+
           {canPrepare && (
             <ApplicationPackagePanel
               pkg={pkg}
@@ -408,9 +422,10 @@ export function ApplicationDetail() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-sm text-slate-500">
-                  The browser agent that fills and verifies forms on the employer's
-                  site is not built yet. If you applied directly, record it here —
-                  this is explicitly marked as not verified by CareerPilot.
+                  Only Greenhouse application pages are supported by the
+                  browser-assisted fill above. If you applied directly — on an
+                  unsupported site, or by hand — record it here. This is
+                  explicitly marked as not verified by CareerPilot.
                 </p>
                 <Textarea
                   placeholder="Optional note"

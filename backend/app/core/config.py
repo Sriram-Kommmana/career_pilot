@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     # a login, or an MFA prompt in the real browser.
     browser_headless: bool = False
     browser_timeout_ms: Annotated[int, Field(ge=1000, le=300_000)] = 30_000
+    #: A session with no activity for this long is treated as expired on next
+    #: access and cleaned up. Sessions are in-memory only, so a process restart
+    #: already invalidates every one of them regardless of this value.
+    browser_session_ttl_seconds: Annotated[int, Field(ge=60, le=7200)] = 600
     # An approval is only valid against a sufficiently fresh verification.
     max_verification_age_seconds: Annotated[int, Field(ge=30, le=86_400)] = 900
 

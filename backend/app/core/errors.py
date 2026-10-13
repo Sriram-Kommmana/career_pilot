@@ -110,6 +110,55 @@ class NotImplementedPhaseError(AppError):
         )
 
 
+class BrowserSessionNotFoundError(NotFoundError):
+    """No session with this id, or it does not belong to this user/application.
+
+    Deliberately the same 404 the rest of the API uses for an unowned resource
+    addressed by an opaque id — this never confirms that someone else's
+    session exists.
+    """
+
+    code = "BROWSER_SESSION_NOT_FOUND"
+
+
+class BrowserSessionExpiredError(ConflictError):
+    """The session existed but has expired, disconnected, or been closed.
+
+    A restarted backend process loses every in-memory session by construction
+    — this is also raised in that case. The required response is the same
+    either way: re-inspect and re-approve, never silently resume.
+    """
+
+    code = "BROWSER_SESSION_EXPIRED"
+
+
+class BrowserSessionConflictError(ConflictError):
+    """A session for this application already exists.
+
+    Two simultaneous sessions must never be able to mutate the same
+    application's fields at once.
+    """
+
+    code = "BROWSER_SESSION_EXISTS"
+
+
+class UnsupportedOriginError(ConflictError):
+    code = "UNSUPPORTED_ORIGIN"
+
+
+class UnsupportedFormError(ConflictError):
+    """The adapter positively refused this page rather than guessing."""
+
+    code = "UNSUPPORTED_FORM"
+
+
+class MappingStaleError(ConflictError):
+    """The approved mapping token no longer matches the session's current
+    proposal — the page was re-inspected, or the session moved on."""
+
+    code = "MAPPING_STALE"
+
+
 class PayloadTooLargeError(AppError):
     status_code = 413
     code = "PAYLOAD_TOO_LARGE"

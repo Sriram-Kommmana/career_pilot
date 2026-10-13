@@ -236,16 +236,20 @@ class TestPrepare:
         )
         assert response.status_code == 422
 
-    async def test_fill_is_not_implemented_in_phase_1(
+    async def test_bare_fill_route_no_longer_exists(
         self, client: object, api: str, auth: dict[str, str], seeded_job: object
     ) -> None:
-        """The browser agent is Phase 5. This must say so, never claim to have filled anything."""
+        """Phase 5 replaced the bare ``/fill`` 501 stub with the real
+        browser-session workflow (``/browser-session``, ``/browser-session/inspect``,
+        ``/browser-session/fill``) — see ``tests/integration/test_browser_session.py``
+        and ``tests/integration/test_browser_fill_verification.py`` for that real
+        behaviour. This only pins down that the old placeholder path is gone, not
+        silently resurrected."""
         created = await _create_application(client, api, auth, seeded_job.id)  # type: ignore[attr-defined]
         response = await client.post(  # type: ignore[attr-defined]
             f"{api}/applications/{created['id']}/fill", headers=auth
         )
-        assert response.status_code == 501
-        assert response.json()["error"]["code"] == "NOT_IMPLEMENTED_YET"
+        assert response.status_code == 404
 
 
 class TestCancelAndOutcome:

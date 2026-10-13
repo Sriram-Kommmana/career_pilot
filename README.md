@@ -181,12 +181,15 @@ career_pilot/
 ### Not yet built
 
 - **Live job connectors** (Greenhouse, Lever, Ashby, career pages) — Phase 2.
-- **Resume upload and extraction** — Phase 3. The endpoint exists and returns a
-  documented 501 rather than pretending to work.
-- **The browser agent** that fills and verifies forms — Phase 5. Until it exists,
-  no application can reach `WAITING_FOR_APPROVAL` through normal use, and
-  `/submit` correctly refuses every attempt. A "record that you applied yourself"
-  path exists as the honest interim option, explicitly marked as unverified.
+- **The browser agent's final submission click** — Phase 6. Phase 5 shipped
+  real browser inspection, controlled filling, and read-back verification for
+  Greenhouse application pages (see [`docs/BROWSER.md`](docs/BROWSER.md)), so
+  an application can now genuinely reach `WAITING_FOR_APPROVAL`, but
+  `applications.submit()` still deliberately refuses with
+  `SUBMISSION_NOT_IMPLEMENTED` even once the gate allows it — no code path
+  clicks an employer's submit control yet. A "record that you applied
+  yourself" path remains the honest interim option, explicitly marked as
+  unverified.
 - **Email/Telegram notifications** — Phase 4B+. Scheduled discovery and in-app,
   threshold-based notifications shipped in Phase 4A as a `python -m app.cli sweep`
   command run on a timer (Task Scheduler/cron — see

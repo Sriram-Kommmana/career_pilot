@@ -15,8 +15,18 @@ There is no code path from a model's output to a submission. Concretely:
 - The browser layer has no submit capability wired to agent control. The click that
   submits is performed by a deterministic code path reached only after the backend gate
   has returned `allowed=True`.
-- `backend/tests/unit/test_submission_gate.py` and (from Phase 5)
-  `backend/tests/browser/test_never_submits.py` are standing guards on this property.
+- `backend/tests/unit/test_submission_gate.py` and (Phase 5)
+  `backend/tests/browser/test_greenhouse_adapter.py::TestNeverSubmitsDuringFill`
+  are standing guards on this property — the latter instruments
+  `HTMLFormElement.prototype.submit` before filling and asserts it is never
+  called.
+- **Confirmed as built (2026-10-13):** Phase 5 shipped real Playwright-driven
+  inspection and controlled filling for Greenhouse application pages,
+  verified both against sanitized local fixtures and manually against a live
+  GitLab posting (see `docs/BROWSER.md`). `applications.submit()` still
+  deliberately refuses with `SUBMISSION_NOT_IMPLEMENTED` even once the gate
+  allows it — the browser layer this section describes has no path to that
+  click yet, by design, pending Phase 6.
 
 ## 2. The submission gate is a backend decision
 

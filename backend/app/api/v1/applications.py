@@ -19,7 +19,9 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query, status
 
 from app.api.deps import AppSettings, AuditContext, CurrentUserId, DbSession
-from app.core.errors import ConflictError, NotImplementedPhaseError, ValidationError
+from app.browser import policy as browser_policy
+from app.browser.session import manager as browser_session_manager
+from app.core.errors import BrowserSessionNotFoundError, ConflictError, ValidationError
 from app.domain.states import TRACKER_COLUMNS, ApplicationState
 from app.models import Application
 from app.schemas.application import (
@@ -41,10 +43,20 @@ from app.schemas.application import (
     SubmitRequest,
     TrackerBoardOut,
 )
-from app.schemas.common import Page
+from app.schemas.browser import (
+    BrowserSessionOut,
+    ExtractedFieldOut,
+    FieldFillOutcomeOut,
+    FillRequest,
+    FillValidationReportOut,
+    InspectionResultOut,
+    ProposedMappingOut,
+)
+from app.schemas.common import MessageResponse, Page
 from app.schemas.job import MatchAssessmentOut
 from app.services import application_package as package_service
 from app.services import applications as app_service
+from app.services import browser_fill as browser_fill_service
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -262,17 +274,164 @@ async def answer_question(
     return _detail(application)
 
 
-@router.post("/{application_id}/fill")
-async def fill_application(
-    application_id: ApplicationId, user_id: CurrentUserId
-) -> dict[str, object]:
-    """Open a real browser and fill the application form.
+@router.post("/{application_id}/browser-session", response_model=BrowserSessionOut)
+async def create_browser_session(
+    application_id: ApplicationId, session: DbSession, user_id: CurrentUserId, settings: AppSettings
+) -> BrowserSessionOut:
+    """Open an isolated browser session for this application and navigate to it.
 
-    Not implemented in Phase 1. Returning 501 is the honest answer: there is no
-    browser agent yet, so nothing can be filled or verified. Phase 5 adds Playwright
-    with deterministic per-ATS adapters and read-back verification.
+    An explicit action, never implicit: nothing opens a browser merely by
+    loading a page. Refuses with 409 if a session for this application is
+    already open — two sessions must never be able to mutate the same
+    application's fields at once.
     """
-    raise NotImplementedPhaseError("Browser-based form filling", phase=5)
+    browser_session = await browser_fill_service.start_session(
+        session, user_id=user_id, application_id=application_id, settings=settings
+    )
+    decision = browser_policy.classify_origin(browser_session.page.url)  # type: ignore[attr-defined]
+    return BrowserSessionOut(
+        session_id=browser_session.session_id, origin=decision.origin or "unknown"
+    )
+
+
+async def _resolve_browser_session_id(user_id: uuid.UUID, application_id: uuid.UUID) -> str:
+    existing = await browser_session_manager.find_for_application(
+        user_id=user_id, application_id=application_id
+    )
+    if existing is None:
+        raise BrowserSessionNotFoundError(
+            "No browser session is open for this application. Start one first."
+        )
+    return existing.session_id
+
+
+@router.post("/{application_id}/browser-session/inspect", response_model=InspectionResultOut)
+async def inspect_browser_session(
+    application_id: ApplicationId, session: DbSession, user_id: CurrentUserId, settings: AppSettings
+) -> InspectionResultOut:
+    """Inspect (or re-inspect) the live form and propose a field mapping.
+
+    Every value proposed here is grounded only in already-confirmed
+    ``ApplicationField``/``ApplicationAnswer`` rows — nothing is invented, and
+    a sensitive or legal question is never given a value, no matter what the
+    page asks.
+    """
+    session_id = await _resolve_browser_session_id(user_id, application_id)
+    outcome = await browser_fill_service.inspect(
+        session,
+        user_id=user_id,
+        application_id=application_id,
+        session_id=session_id,
+        settings=settings,
+    )
+    return InspectionResultOut(
+        session_id=outcome.session_id,
+        origin=outcome.origin,
+        supported=outcome.supported,
+        reason=outcome.reason,
+        fields=[
+            ExtractedFieldOut(
+                field_id=f.field_id,
+                label=f.label,
+                field_kind=f.field_kind,
+                required=f.required,
+                unrecognised=f.unrecognised,
+            )
+            for f in outcome.extracted_fields
+        ],
+        mappings=[
+            ProposedMappingOut(
+                field_id=m.field_id,
+                label=m.label,
+                field_kind=m.field_kind,
+                required=m.required,
+                proposed_value=m.proposed_value,
+                source_kind=m.source_kind,
+                source_id=m.source_id,
+                source_provenance=m.source_provenance,
+                confidence=m.confidence,
+                rule_id=m.rule_id,
+                needs_review=m.needs_review,
+                supported_for_fill=m.supported_for_fill,
+                sensitive_category=m.sensitive_category,
+                reason=m.reason,
+            )
+            for m in outcome.proposed_mappings
+        ],
+        mapping_token=outcome.mapping_token,
+    )
+
+
+@router.post("/{application_id}/browser-session/fill", response_model=FillValidationReportOut)
+async def fill_browser_session(
+    application_id: ApplicationId,
+    payload: FillRequest,
+    session: DbSession,
+    user_id: CurrentUserId,
+    settings: AppSettings,
+) -> FillValidationReportOut:
+    """Fill only the approved fields, verify each by reading the page back,
+    and never submit. This is where Approval A (the mapping token) is checked.
+
+    Approval B (submission) is untouched by this endpoint — it still requires
+    the existing ``/review`` -> ``/approve`` -> ``/submit`` path, now fed the
+    real verification this endpoint produces.
+    """
+    session_id = await _resolve_browser_session_id(user_id, application_id)
+    report = await browser_fill_service.fill(
+        session,
+        user_id=user_id,
+        application_id=application_id,
+        session_id=session_id,
+        mapping_token=payload.mapping_token,
+        excluded_field_ids=frozenset(payload.excluded_field_ids),
+        settings=settings,
+    )
+    return FillValidationReportOut(
+        session_id=report.session_id,
+        outcomes=[
+            FieldFillOutcomeOut(
+                field_id=o.field_id,
+                action_result=o.action_result,
+                verification=o.verification,
+                verification_note=o.verification_note,
+            )
+            for o in report.outcomes
+        ],
+        filled_count=report.filled_count,
+        failed_count=report.failed_count,
+        still_needs_human=list(report.still_needs_human),
+        application_state=report.application_state,
+        verification_status=report.verification_status,
+    )
+
+
+@router.get("/{application_id}/browser-session", response_model=BrowserSessionOut)
+async def get_browser_session(
+    application_id: ApplicationId, user_id: CurrentUserId
+) -> BrowserSessionOut:
+    """Current session status, for reload/resume. 404s if none is open —
+    the same contract every other owner-scoped resource in this API uses."""
+    existing = await browser_session_manager.find_for_application(
+        user_id=user_id, application_id=application_id
+    )
+    if existing is None:
+        raise BrowserSessionNotFoundError("No browser session is open for this application.")
+    decision = browser_policy.classify_origin(existing.page.url)  # type: ignore[attr-defined]
+    return BrowserSessionOut(session_id=existing.session_id, origin=decision.origin or "unknown")
+
+
+@router.delete("/{application_id}/browser-session", response_model=MessageResponse)
+async def close_browser_session(
+    application_id: ApplicationId, user_id: CurrentUserId
+) -> MessageResponse:
+    """Explicitly close the session. Always safe to call, even if none is open."""
+    existing = await browser_session_manager.find_for_application(
+        user_id=user_id, application_id=application_id
+    )
+    if existing is not None:
+        await browser_session_manager.close(existing.session_id)
+    return MessageResponse(message="Browser session closed.")
 
 
 @router.get("/{application_id}/review", response_model=ApplicationReviewOut)
