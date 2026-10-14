@@ -555,7 +555,7 @@ class TestDuplicateAndConcurrentSubmission:
 
 
 class TestUncertainOutcomeReconciliation:
-    async def test_reconciliation_confirms_success_from_the_still_open_page_without_clicking_again(
+    async def test_reconciliation_confirms_success_when_the_form_is_gone_without_clicking_again(
         self,
         client: object,
         api: str,
@@ -585,6 +585,65 @@ class TestUncertainOutcomeReconciliation:
 
         user_id = user_id_from_auth(auth)
         application_id = uuid.UUID(detail["id"])
+        # Corroborated: new marker AND the application form has disappeared.
+        # The confirmation genuinely appears a little later than our bounded
+        # wait — a realistic reason an attempt can be uncertain even though
+        # the employer really did receive it.
+        live = await session_manager.find_for_application(
+            user_id=user_id, application_id=application_id
+        )
+        assert live is not None
+        await live.page.evaluate(  # type: ignore[attr-defined]
+            "document.querySelector('form').remove();"
+            "document.body.insertAdjacentHTML('beforeend', "
+            "'<div>Thank you for applying! We have received your application.</div>')"
+        )
+
+        response = await client.post(  # type: ignore[attr-defined]
+            f"{api}/applications/{application_id}/reconcile-submission",
+            headers=auth,
+            json={"outcome": "SUBMITTED", "note": "Confirmed via the still-open browser."},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["state"] == ApplicationState.SUBMITTED.value
+        assert body["submission_evidence"]["checked_live_page"] is True
+        assert body["submission_evidence"]["verified_by_careerpilot"] is True
+
+        # Reconciliation never clicks the submit control again.
+        assert await _submit_attempts(user_id, application_id) == 1
+
+    async def test_reconciliation_does_not_verify_a_new_marker_while_the_form_remains(
+        self,
+        client: object,
+        api: str,
+        auth: dict[str, str],
+        seeded_job: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        detail = await advance_application_to_waiting_for_approval(
+            client,
+            api,
+            auth,
+            seeded_job.id,  # type: ignore[attr-defined]
+            monkeypatch,
+            fixture_name="greenhouse_submission_ready_ambiguous.html",
+        )
+        await client.post(  # type: ignore[attr-defined]
+            f"{api}/applications/{detail['id']}/approve",
+            headers=auth,
+            json={"form_state_hash": detail["form_state_hash"]},
+        )
+        submitted = await client.post(  # type: ignore[attr-defined]
+            f"{api}/applications/{detail['id']}/submit",
+            headers=auth,
+            json={"confirm": True, "form_state_hash": detail["form_state_hash"]},
+        )
+        assert submitted.json()["state"] == ApplicationState.SUBMITTED_UNCERTAIN.value
+
+        user_id = user_id_from_auth(auth)
+        application_id = uuid.UUID(detail["id"])
+        # Uncorroborated: a new marker appeared but the same URL and the form is still present.
         # The confirmation genuinely appears a little later than our bounded
         # wait — a realistic reason an attempt can be uncertain even though
         # the employer really did receive it.
@@ -604,9 +663,10 @@ class TestUncertainOutcomeReconciliation:
         )
         assert response.status_code == 200, response.text
         body = response.json()
+        # The user's own attestation still stands, separate from our verification.
         assert body["state"] == ApplicationState.SUBMITTED.value
-        assert body["submission_evidence"]["checked_live_page"] is True
-        assert body["submission_evidence"]["verified_by_careerpilot"] is True
+        assert body["submission_evidence"]["checked_live_page"] is False
+        assert body["submission_evidence"]["verified_by_careerpilot"] is False
 
         # Reconciliation never clicks the submit control again.
         assert await _submit_attempts(user_id, application_id) == 1

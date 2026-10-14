@@ -353,13 +353,14 @@ async def reconcile(
     passively re-reads the live page for the same confirmation markers
     ``submit()`` looks for (read-only — no click, no fill, no navigation) and
     records a match as corroborating evidence only if it is trustworthy by
-    the same standard ``submit()`` itself applies: either it is genuinely
-    new since the baseline captured immediately before the original click
-    (when this is the same still-open session that made the attempt), or —
-    if no such baseline is available (a different or reopened session) — the
-    application form is no longer present, since a marker that is merely
-    sitting somewhere on an unchanged page proves nothing about what
-    happened. A marker that fails both checks is not corroborating evidence,
+    the same standard ``submit()`` itself applies: the marker must be
+    genuinely new since the baseline captured immediately before the original
+    click (when this is the same still-open session that made the attempt;
+    without a baseline any marker qualifies), *and* structurally corroborated
+    exactly as ``submit()`` requires — the URL changed since the baseline, or
+    the application form is gone. A marker on an unchanged page with the form
+    still present proves nothing about what happened. A marker that fails
+    either check is not corroborating evidence,
     and this never resubmits anything to find out. The final ``outcome`` is
     always the caller's explicit attestation, never silently overridden or
     inferred from this check.
@@ -379,16 +380,23 @@ async def reconcile(
                 ttl_seconds=cfg.browser_session_ttl_seconds,
             )
             adapter = _ADAPTERS[browser_session.adapter_name]
-            text, _ = await adapter._snapshot(browser_session.page)  # type: ignore[attr-defined]
+            text, current_url = await adapter._snapshot(browser_session.page)  # type: ignore[attr-defined]
             baseline = browser_session.submission_baseline_text
+            baseline_url = browser_session.submission_baseline_url
             if baseline is not None:
                 marker = _first_new_marker(text, SUCCESS_TEXT_MARKERS, baseline)
-                checked_live_page = marker is not None
             else:
                 marker = next((m for m in SUCCESS_TEXT_MARKERS if m in text), None)
-                checked_live_page = marker is not None and not await adapter._form_is_present(  # type: ignore[attr-defined]
+            if marker is not None:
+                # Same structural corroboration submit() requires: a marker
+                # alone is never enough. The URL must have changed since the
+                # pre-click baseline (only knowable on the original session)
+                # or the application form must be gone.
+                navigated = baseline_url is not None and current_url != baseline_url
+                form_gone = not await adapter._form_is_present(  # type: ignore[attr-defined]
                     browser_session.page
                 )
+                checked_live_page = navigated or form_gone
         except Exception as exc:
             logger.debug(
                 "browser_reconcile_passive_check_failed",

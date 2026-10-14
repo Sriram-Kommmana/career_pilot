@@ -392,7 +392,9 @@ function returning `allowed` plus a list of blockers. Every one of these must ho
 
 Failure returns `409` listing the blockers. The frontend button is a convenience, not a
 boundary. If the submission result is ambiguous, state becomes `SUBMITTED_UNCERTAIN`
-and requires human reconciliation; it is never auto-retried.
+and requires human reconciliation; it is never auto-retried. Outcome detection
+is best-effort and has not been validated against an actual employer-side
+submission (see `docs/BROWSER.md`).
 
 ---
 
@@ -567,7 +569,7 @@ ever. Fixed by carrying the correspondence forward as `source_kind`/
 file exactly as a human would before asserting the resulting field is
 verified.
 
-`tests/integration/test_browser_submission.py` (16 tests) covers the full
+`tests/integration/test_browser_submission.py` covers the full
 matrix: a successful submission with exactly one real click, confirmed
 failure, an uncertain outcome with no auto-retry, every refusal path listed
 above plus a stale-hash/missing-field/unresolved-legal-question refusal,

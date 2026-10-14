@@ -108,7 +108,7 @@ python -m app.cli sweep
 Testing and code quality (from `backend/`, with the venv active):
 
 ```bash
-pytest                               # unit + integration (304 tests)
+pytest                               # unit + integration + browser
 pytest tests/unit -q                 # pure domain logic only — no database needed
 pytest -m integration                # API + real database
 ruff check app tests                 # lint
@@ -145,8 +145,8 @@ career_pilot/
       seed/           labelled demo data
     alembic/          migrations
     tests/
-      unit/           domain logic — no infrastructure (237 tests)
-      integration/    real Postgres, full HTTP stack (67 tests)
+      unit/           domain logic — no infrastructure
+      integration/    real Postgres, full HTTP stack
   frontend/
     src/
       pages/          one file per route
@@ -176,7 +176,7 @@ career_pilot/
   labelled as a ranking heuristic, never as a probability.
 - The application state machine and the submission gate, both enforced
   server-side and fully exercised through the UI.
-- 612 backend tests (unit + integration + browser) and 27 frontend tests, all passing.
+- 613 backend tests (unit + integration + browser) and 27 frontend tests, all passing at the time of writing (the only place a test count is stated).
 
 ### Not yet built
 

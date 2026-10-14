@@ -340,7 +340,9 @@ class TestSweepCliExitStatus:
 
         monkeypatch.setattr(config_module, "resolve_database_url", lambda settings: "unused")
 
-    async def test_a_normal_run_with_nothing_configured_exits_zero(self) -> None:
+    async def test_a_normal_run_with_nothing_configured_exits_zero(
+        self, db_engine: object
+    ) -> None:
         from app.cli import _run_sweep
 
         assert await _run_sweep() == 0

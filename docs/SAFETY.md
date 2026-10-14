@@ -93,6 +93,11 @@ attempt, not a warning. Screenshots are supporting evidence only.
 
 A submission is reported as `SUBMITTED` only when the resulting page state supports it.
 An ambiguous result becomes `SUBMITTED_UNCERTAIN` and requires human reconciliation.
+
+**Known limit:** submission outcome detection is best-effort. Its success/rejection
+markers and structural checks have been exercised only against sanitized local
+fixtures and have **not** been validated against an actual employer-side
+submission; treat `verified_by_careerpilot` as corroboration, never proof.
 A potentially successful submission is never retried automatically.
 
 **Confirmed as built (2026-10-13, Phase 6):** `app.browser.adapters.greenhouse`'s
@@ -107,8 +112,9 @@ implementation, is `UNCERTAIN`, never `CONFIRMED_FAILURE`, because an
 exception alone cannot rule out that the click's real-world effect already
 fired. Reconciling an uncertain outcome (`POST /reconcile-submission`) never
 clicks anything again, by construction — it applies the same
-new-since-baseline standard where a baseline is available, falls back to
-requiring the form to be gone otherwise, and the final `SUBMITTED`/`FAILED`
+new-since-baseline plus structural-corroboration standard (URL changed or
+form gone) where a baseline is available, requires the form to be gone
+otherwise, and the final `SUBMITTED`/`FAILED`
 outcome is always the user's own explicit choice, never inferred from that
 check.
 

@@ -180,10 +180,12 @@ deliberate sequence — never a side effect of filling, and never automatic.
 
    Reconciling an uncertain outcome (`POST /reconcile-submission`) applies
    the same discipline to its own passive, read-only check: on the same
-   still-open session that made the attempt, it compares against that exact
-   pre-click snapshot; on a different or reopened session (no snapshot
-   available), it requires the application form to be gone before treating
-   a matching phrase as corroborating at all. Either way this is only ever
+   still-open session that made the attempt, a matching phrase must be new
+   since that exact pre-click snapshot **and** structurally corroborated
+   (the URL changed or the application form is gone) — the same standard
+   `submit()` applies; on a different or reopened session (no snapshot
+   available), a matching phrase requires the application form to be gone.
+   A marker alone never sets `verified_by_careerpilot`. Either way this is only ever
    corroborating metadata (`verified_by_careerpilot`) alongside the user's
    own explicit `SUBMITTED`/`FAILED` choice — it never decides the outcome
    by itself, and the UI shows the two cases with different wording rather
@@ -350,6 +352,15 @@ found one concrete defect, fixed with regression tests:
    the fix and pass after, by temporarily reverting the classifier and
    reconciliation logic and re-running them.
 
+2. **Reconciliation accepted a new marker without structural
+   corroboration.** On the original session, `reconcile()` set
+   `verified_by_careerpilot` from a new-since-baseline marker alone, even
+   with the same URL and the form still present — weaker than `submit()`.
+   Fixed: a new marker now also requires a changed URL or a vanished form.
+   Regression tests: `test_reconciliation_confirms_success_when_the_form_is_gone_without_clicking_again`
+   and `test_reconciliation_does_not_verify_a_new_marker_while_the_form_remains`
+   (both assert exactly one real submit click afterwards).
+
 ## Manual verification performed
 
 On 2026-10-13, the full flow was exercised by hand against a **live**
@@ -384,7 +395,7 @@ UI path (the "Approve and submit application" confirmation panel, and the
 success/failure/uncertain banners) was **not** exercised against a live
 browser click by hand — that path is instead covered end to end, with a real
 Playwright browser, by `tests/integration/test_browser_submission.py`
-(16 tests, all passing) and `tests/browser/test_greenhouse_adapter.py`'s
+(all passing) and `tests/browser/test_greenhouse_adapter.py`'s
 submission-classification tests, against the sanitized local fixtures
 described above. Nothing resembling a real employer submission has been
 performed by hand or by any automated test.

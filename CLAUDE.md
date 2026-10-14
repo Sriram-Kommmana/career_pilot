@@ -63,7 +63,7 @@ use constantly while developing:
 ```bash
 # Backend, from backend/ with .venv active
 python -m app.cli serve --port 8000     # run the API
-pytest                                   # all 304 tests
+pytest                                   # full backend suite
 pytest tests/unit -q                     # pure domain logic, no database
 ruff check app tests && mypy app tests   # must both be clean before finishing
 
